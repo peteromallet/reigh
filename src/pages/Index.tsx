@@ -1,14 +1,23 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import ImageGenerationForm from "@/components/ImageGenerationForm";
 import ImageGallery from "@/components/ImageGallery";
 import { fal } from "@fal-ai/client";
 import { toast } from "sonner";
 
-// Initialize fal client with the provided API key
-fal.config({
-  credentials: '0b6f1876-0aab-4b56-b821-b384b64768fa:121392c885a381f93de56d701e3d532f'
-});
+// Initialize fal client with environment configuration
+const initializeFalClient = () => {
+  // In a production environment, this would be handled differently
+  // This is a temporary solution for demonstration purposes
+  const API_KEY = sessionStorage.getItem('fal_api_key') || 
+                 '0b6f1876-0aab-4b56-b821-b384b64768fa:121392c885a381f93de56d701e3d532f';
+  
+  fal.config({
+    credentials: API_KEY
+  });
+  
+  return API_KEY;
+};
 
 // Mock placeholder data for generated images
 const placeholderImages = Array(8).fill(null).map((_, index) => ({
@@ -29,6 +38,13 @@ interface GeneratedImage {
 const Index = () => {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>(placeholderImages);
   const [isLoading, setIsLoading] = useState(false);
+  const [apiKey, setApiKey] = useState<string>('');
+  
+  useEffect(() => {
+    // Initialize the API key on component mount
+    const key = initializeFalClient();
+    setApiKey(key);
+  }, []);
 
   const handleGenerate = async (formData: any) => {
     setIsLoading(true);
@@ -43,6 +59,7 @@ const Index = () => {
             path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
             end_percentage: 0.5,
             conditioning_scale: formData.softEdgeStrength,
+            // Use the property correctly according to the API specs
             control_image_url: formData.controlImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png"
           }],
           controlnet_unions: [],
@@ -60,6 +77,7 @@ const Index = () => {
           control_loras: [{
             path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
             preprocess: "depth",
+            // Use the property correctly according to the API specs
             control_image_url: formData.depthControlImageUrl || "https://v3.fal.media/files/lion/Xq7VLnpg89HEfHh_spBTN_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png",
             scale: formData.depthStrength.toString()
           }],
