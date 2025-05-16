@@ -68,15 +68,20 @@ const Index = () => {
       
       if (data && data.length > 0) {
         // Map database records to the GeneratedImage format
-        const dbImages: GeneratedImage[] = data.map(record => ({
-          id: record.id,
-          url: record.image_url,
-          prompt: record.prompt,
-          seed: record.seed,
-          width: record.metadata?.width ? Number(record.metadata.width) : undefined,
-          height: record.metadata?.height ? Number(record.metadata.height) : undefined,
-          content_type: record.metadata?.content_type ? String(record.metadata.content_type) : undefined
-        }));
+        const dbImages: GeneratedImage[] = data.map(record => {
+          // Handle the metadata object correctly
+          const metadata = record.metadata as Record<string, any> || {};
+          
+          return {
+            id: record.id,
+            url: record.image_url,
+            prompt: record.prompt,
+            seed: record.seed,
+            width: metadata.width ? Number(metadata.width) : undefined,
+            height: metadata.height ? Number(metadata.height) : undefined,
+            content_type: metadata.content_type ? String(metadata.content_type) : undefined
+          };
+        });
         
         setGeneratedImages(dbImages);
         setShowPlaceholders(false);
@@ -135,7 +140,7 @@ const Index = () => {
       const controlImageUrl = formData.controlImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png";
       const depthControlImageUrl = formData.depthControlImageUrl || "https://v3.fal.media/files/lion/Xq7VLnpg89HEfHh_spBTN_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png";
       
-      // Convert strengths to appropriate values (0-1 range)
+      // Use the normalized strength values directly
       const loraStrength = formData.loraStrength;
       const depthStrength = formData.depthStrength;
       const softEdgeStrength = formData.softEdgeStrength;
@@ -154,7 +159,7 @@ const Index = () => {
             path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
             end_percentage: 0.5,
             conditioning_scale: softEdgeStrength,
-            control_image: controlImageUrl
+            control_image_url: controlImageUrl
           }],
           controlnet_unions: [],
           ip_adapters: [],
@@ -170,7 +175,7 @@ const Index = () => {
           control_loras: [{
             path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
             preprocess: "depth",
-            control_image: depthControlImageUrl,
+            control_image_url: depthControlImageUrl,
             scale: depthStrength.toString()
           }],
           image_size: "portrait_16_9",
