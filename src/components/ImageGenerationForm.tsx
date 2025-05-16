@@ -13,14 +13,17 @@ interface ImageGenerationFormProps {
 
 const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate }) => {
   const [prompt, setPrompt] = useState("");
-  const [promptCount, setPromptCount] = useState(64);
+  const [promptCount, setPromptCount] = useState(1);
   const [imagesPerPrompt, setImagesPerPrompt] = useState(1);
   const [dynamicPrompt, setDynamicPrompt] = useState(false);
   const [dynamicStartingImage, setDynamicStartingImage] = useState(false);
-  const [loraStrength, setLoraStrength] = useState(50);
-  const [depthStrength, setDepthStrength] = useState(50);
-  const [softEdgeStrength, setSoftEdgeStrength] = useState(50);
+  const [loraUrl, setLoraUrl] = useState("https://huggingface.co/XLabs-AI/flux-RealismLora/resolve/main/lora.safetensors");
+  const [loraStrength, setLoraStrength] = useState(40); // Default to 0.4 as per the example
+  const [depthStrength, setDepthStrength] = useState(60); // Default to 0.6 as per the example
+  const [softEdgeStrength, setSoftEdgeStrength] = useState(20); // Default to 0.2 as per the example control conditioning
   const [startingImage, setStartingImage] = useState<File | null>(null);
+  const [controlImageUrl, setControlImageUrl] = useState("");
+  const [depthControlImageUrl, setDepthControlImageUrl] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,10 +33,13 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate })
       imagesPerPrompt,
       dynamicPrompt,
       dynamicStartingImage,
-      loraStrength,
-      depthStrength,
-      softEdgeStrength,
+      loraUrl,
+      loraStrength: loraStrength / 100,
+      depthStrength: depthStrength / 100,
+      softEdgeStrength: softEdgeStrength / 100,
       startingImage,
+      controlImageUrl,
+      depthControlImageUrl
     });
   };
 
@@ -87,6 +93,20 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate })
             onCheckedChange={(checked) => setDynamicPrompt(checked === true)}
           />
           <Label htmlFor="dynamicPrompt">Dynamically generate prompt</Label>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <Label htmlFor="loraUrl">LoRA URL</Label>
+            <Input
+              id="loraUrl"
+              type="text"
+              value={loraUrl}
+              onChange={(e) => setLoraUrl(e.target.value)}
+              className="mt-1"
+              placeholder="Enter LoRA URL"
+            />
+          </div>
         </div>
 
         <div className="space-y-6 pt-2">
