@@ -1,7 +1,7 @@
-
 import React, { useState, useEffect } from "react";
 import ImageGenerationForm from "@/components/ImageGenerationForm";
 import ImageGallery from "@/components/ImageGallery";
+import SettingsModal from "@/components/SettingsModal";
 import { fal } from "@fal-ai/client";
 import { toast } from "sonner";
 
@@ -39,12 +39,28 @@ const Index = () => {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>(placeholderImages);
   const [isLoading, setIsLoading] = useState(false);
   const [apiKey, setApiKey] = useState<string>('');
+  const [showPlaceholders, setShowPlaceholders] = useState(true);
   
   useEffect(() => {
     // Initialize the API key on component mount
     const key = initializeFalClient();
     setApiKey(key);
   }, []);
+
+  const handleSaveApiKeys = (falApiKey: string, openaiApiKey: string) => {
+    // Save both API keys to sessionStorage
+    sessionStorage.setItem('fal_api_key', falApiKey);
+    sessionStorage.setItem('openai_api_key', openaiApiKey);
+    
+    // Update the fal client with the new key
+    fal.config({
+      credentials: falApiKey
+    });
+    
+    // Update state
+    setApiKey(falApiKey);
+    toast.success("API keys updated successfully");
+  };
 
   const handleGenerate = async (formData: any) => {
     setIsLoading(true);
@@ -108,8 +124,15 @@ const Index = () => {
         seed: result.data.seed
       }));
       
-      // Add new images to the beginning of the array
-      setGeneratedImages([...newImages, ...generatedImages]);
+      // Replace placeholders if this is the first real generation
+      if (showPlaceholders) {
+        setGeneratedImages(newImages);
+        setShowPlaceholders(false);
+      } else {
+        // Otherwise, add new images to the beginning of the array
+        setGeneratedImages(prevImages => [...newImages, ...prevImages]);
+      }
+      
       toast.success("Images generated successfully!");
       
     } catch (error) {
@@ -122,8 +145,14 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="container mx-auto py-8 px-4">
+      <div className="container mx-auto py-8 px-4 relative">
         <h1 className="text-3xl font-bold mb-8 text-center">AI Image Generator</h1>
+        
+        {/* Settings Modal */}
+        <SettingsModal 
+          currentFalApiKey={apiKey}
+          onSaveApiKeys={handleSaveApiKeys}
+        />
         
         <div className="space-y-8">
           {/* Top Pane: Controls */}
