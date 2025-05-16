@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import ImageGenerationForm from "@/components/ImageGenerationForm";
 import ImageGallery from "@/components/ImageGallery";
@@ -76,12 +75,10 @@ const Index = () => {
             path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
             end_percentage: 0.5,
             conditioning_scale: formData.softEdgeStrength,
-            // Fix the property name according to the API specs
-            image_url: formData.controlImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png"
+            control_image_url: formData.controlImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png"
           }],
           controlnet_unions: [],
           ip_adapters: [],
-          easycontrols: [],
           guidance_scale: 3.5,
           real_cfg_scale: 3.5,
           num_images: formData.imagesPerPrompt,
@@ -94,7 +91,6 @@ const Index = () => {
           control_loras: [{
             path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
             preprocess: "depth",
-            // Fix the property name from image_url to control_image_url
             control_image_url: formData.depthControlImageUrl || "https://v3.fal.media/files/lion/Xq7VLnpg89HEfHh_spBTN_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png",
             scale: formData.depthStrength.toString()
           }],
