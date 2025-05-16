@@ -9,9 +9,10 @@ import { Label } from "@/components/ui/label";
 
 interface ImageGenerationFormProps {
   onGenerate: (formData: any) => void;
+  isGenerating?: boolean;
 }
 
-const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate }) => {
+const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, isGenerating = false }) => {
   const [prompt, setPrompt] = useState("");
   const [promptCount, setPromptCount] = useState(1);
   const [imagesPerPrompt, setImagesPerPrompt] = useState(1);
@@ -149,9 +150,10 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate })
 
         <button
           type="submit"
-          className="mt-6 w-full py-2 px-4 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+          className="mt-6 w-full py-2 px-4 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+          disabled={isGenerating}
         >
-          Generate Images
+          {isGenerating ? "Generating..." : "Generate Images"}
         </button>
       </div>
     </form>

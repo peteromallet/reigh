@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from "react";
 import ImageGenerationForm from "@/components/ImageGenerationForm";
 import ImageGallery from "@/components/ImageGallery";
@@ -37,7 +38,7 @@ interface GeneratedImage {
 
 const Index = () => {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>(placeholderImages);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [apiKey, setApiKey] = useState<string>('');
   const [showPlaceholders, setShowPlaceholders] = useState(true);
   
@@ -63,7 +64,7 @@ const Index = () => {
   };
 
   const handleGenerate = async (formData: any) => {
-    setIsLoading(true);
+    setIsGenerating(true);
     toast.info("Generating images...");
     
     try {
@@ -75,8 +76,8 @@ const Index = () => {
             path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
             end_percentage: 0.5,
             conditioning_scale: formData.softEdgeStrength,
-            // Use the property correctly according to the API specs
-            control_image_url: formData.controlImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png"
+            // Fix the property name according to the API specs
+            image_url: formData.controlImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png"
           }],
           controlnet_unions: [],
           ip_adapters: [],
@@ -93,8 +94,8 @@ const Index = () => {
           control_loras: [{
             path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
             preprocess: "depth",
-            // Use the property correctly according to the API specs
-            control_image_url: formData.depthControlImageUrl || "https://v3.fal.media/files/lion/Xq7VLnpg89HEfHh_spBTN_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png",
+            // Fix the property name according to the API specs
+            image_url: formData.depthControlImageUrl || "https://v3.fal.media/files/lion/Xq7VLnpg89HEfHh_spBTN_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png",
             scale: formData.depthStrength.toString()
           }],
           image_size: "portrait_16_9",
@@ -139,7 +140,7 @@ const Index = () => {
       console.error("Error generating images:", error);
       toast.error("Failed to generate images. Please try again.");
     } finally {
-      setIsLoading(false);
+      setIsGenerating(false);
     }
   };
 
@@ -157,18 +158,18 @@ const Index = () => {
         <div className="space-y-8">
           {/* Top Pane: Controls */}
           <div className="bg-white rounded-xl shadow overflow-hidden">
-            <ImageGenerationForm onGenerate={handleGenerate} />
+            <ImageGenerationForm onGenerate={handleGenerate} isGenerating={isGenerating} />
           </div>
           
           {/* Bottom Pane: Results */}
           <div className="bg-white rounded-xl shadow p-6">
-            {isLoading ? (
-              <div className="flex justify-center items-center py-10">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+            {isGenerating && (
+              <div className="flex justify-center items-center py-3 mb-4">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                <span className="ml-2">Generating new images...</span>
               </div>
-            ) : (
-              <ImageGallery images={generatedImages} />
             )}
+            <ImageGallery images={generatedImages} />
           </div>
         </div>
       </div>
