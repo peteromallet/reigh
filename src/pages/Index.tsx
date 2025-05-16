@@ -4,6 +4,7 @@ import ImageGallery from "@/components/ImageGallery";
 import SettingsModal from "@/components/SettingsModal";
 import { fal } from "@fal-ai/client";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 // Initialize fal client with environment configuration
 const initializeFalClient = () => {
@@ -27,6 +28,7 @@ const placeholderImages = Array(8).fill(null).map((_, index) => ({
 }));
 
 interface GeneratedImage {
+  id?: string;
   url: string;
   width?: number;
   height?: number;
@@ -40,12 +42,48 @@ const Index = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [apiKey, setApiKey] = useState<string>('');
   const [showPlaceholders, setShowPlaceholders] = useState(true);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
   
   useEffect(() => {
     // Initialize the API key on component mount
     const key = initializeFalClient();
     setApiKey(key);
+    
+    // Fetch previously generated images from the database
+    fetchGeneratedImages();
   }, []);
+  
+  const fetchGeneratedImages = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('generations')
+        .select('*')
+        .order('created_at', { ascending: false });
+        
+      if (error) {
+        console.error('Error fetching images:', error);
+        return;
+      }
+      
+      if (data && data.length > 0) {
+        // Map database records to the GeneratedImage format
+        const dbImages: GeneratedImage[] = data.map(record => ({
+          id: record.id,
+          url: record.image_url,
+          prompt: record.prompt,
+          seed: record.seed,
+          width: record.metadata?.width,
+          height: record.metadata?.height,
+          content_type: record.metadata?.content_type
+        }));
+        
+        setGeneratedImages(dbImages);
+        setShowPlaceholders(false);
+      }
+    } catch (error) {
+      console.error('Error fetching images:', error);
+    }
+  };
 
   const handleSaveApiKeys = (falApiKey: string, openaiApiKey: string) => {
     // Save both API keys to sessionStorage
@@ -61,6 +99,31 @@ const Index = () => {
     setApiKey(falApiKey);
     toast.success("API keys updated successfully");
   };
+  
+  const handleDeleteImage = async (id: string) => {
+    setIsDeleting(id);
+    
+    try {
+      const { error } = await supabase
+        .from('generations')
+        .delete()
+        .eq('id', id);
+        
+      if (error) {
+        toast.error("Failed to delete image: " + error.message);
+        return;
+      }
+      
+      // Update UI after successful deletion
+      setGeneratedImages(prevImages => prevImages.filter(image => image.id !== id));
+      toast.success("Image deleted successfully");
+    } catch (error) {
+      console.error('Error deleting image:', error);
+      toast.error("Failed to delete image");
+    } finally {
+      setIsDeleting(null);
+    }
+  };
 
   const handleGenerate = async (formData: any) => {
     setIsGenerating(true);
@@ -75,7 +138,7 @@ const Index = () => {
             path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
             end_percentage: 0.5,
             conditioning_scale: formData.softEdgeStrength,
-            control_image_url: formData.controlImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png"
+            control_image: formData.controlImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png"
           }],
           controlnet_unions: [],
           ip_adapters: [],
@@ -91,8 +154,8 @@ const Index = () => {
           control_loras: [{
             path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
             preprocess: "depth",
-            control_image_url: formData.depthControlImageUrl || "https://v3.fal.media/files/lion/Xq7VLnpg89HEfHh_spBTN_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png",
-            scale: formData.depthStrength.toString()
+            control_image: formData.depthControlImageUrl || "https://v3.fal.media/files/lion/Xq7VLnpg89HEfHh_spBTN_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png",
+            scale: formData.loraStrength.toString()
           }],
           image_size: "portrait_16_9",
           loras: [{
@@ -111,7 +174,7 @@ const Index = () => {
       console.log(result.data);
       console.log(result.requestId);
       
-      // Process the results and update the generated images
+      // Process the results and create new image objects
       const newImages = result.data.images.map((img: any) => ({
         url: img.url,
         width: img.width,
@@ -120,6 +183,43 @@ const Index = () => {
         prompt: formData.prompt,
         seed: result.data.seed
       }));
+      
+      // Save the generated images to the database
+      for (const image of newImages) {
+        // Create metadata object with all settings
+        const metadata = {
+          width: image.width,
+          height: image.height,
+          content_type: image.content_type,
+          loraUrl: formData.loraUrl,
+          loraStrength: formData.loraStrength,
+          depthStrength: formData.depthStrength,
+          softEdgeStrength: formData.softEdgeStrength,
+          dynamicPrompt: formData.dynamicPrompt,
+          dynamicStartingImage: formData.dynamicStartingImage
+        };
+        
+        try {
+          const { data, error } = await supabase
+            .from('generations')
+            .insert({
+              image_url: image.url,
+              prompt: image.prompt,
+              seed: image.seed,
+              metadata: metadata
+            })
+            .select();
+            
+          if (error) {
+            console.error('Error saving image to database:', error);
+          } else if (data && data.length > 0) {
+            // Add the database id to the image object
+            image.id = data[0].id;
+          }
+        } catch (dbError) {
+          console.error('Error saving image to database:', dbError);
+        }
+      }
       
       // Replace placeholders if this is the first real generation
       if (showPlaceholders) {
@@ -165,7 +265,11 @@ const Index = () => {
                 <span className="ml-2">Generating new images...</span>
               </div>
             )}
-            <ImageGallery images={generatedImages} />
+            <ImageGallery 
+              images={generatedImages} 
+              onDelete={handleDeleteImage}
+              isDeleting={isDeleting}
+            />
           </div>
         </div>
       </div>

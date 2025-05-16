@@ -1,5 +1,7 @@
 
 import React from "react";
+import { Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface GeneratedImage {
   id?: string;
@@ -13,9 +15,11 @@ interface GeneratedImage {
 
 interface ImageGalleryProps {
   images: GeneratedImage[];
+  onDelete?: (id: string) => void;
+  isDeleting?: string | null;
 }
 
-const ImageGallery: React.FC<ImageGalleryProps> = ({ images }) => {
+const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeleting }) => {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-medium">Generated images:</h2>
@@ -24,11 +28,13 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images }) => {
         {images.map((image, index) => {
           // Create a unique key for each image
           const imageKey = image.id || `image-${image.url}-${index}`;
+          const isPlaceholder = !image.id;
+          const isCurrentlyDeleting = isDeleting === image.id;
           
           return (
             <div 
               key={imageKey}
-              className="border rounded-lg overflow-hidden hover:shadow-md transition-shadow"
+              className="border rounded-lg overflow-hidden hover:shadow-md transition-shadow relative group"
             >
               <div className="relative w-full">
                 <div style={{ 
@@ -44,6 +50,25 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images }) => {
                   />
                 </div>
               </div>
+              
+              {!isPlaceholder && onDelete && (
+                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Button 
+                    variant="destructive" 
+                    size="sm" 
+                    className="h-8 w-8 p-0 rounded-full"
+                    onClick={() => onDelete(image.id!)}
+                    disabled={isCurrentlyDeleting}
+                  >
+                    {isCurrentlyDeleting ? (
+                      <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-white"></div>
+                    ) : (
+                      <Trash2 className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+              )}
+              
               {image.seed && (
                 <div className="p-2 text-xs text-gray-500">
                   Seed: {image.seed}

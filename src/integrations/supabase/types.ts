@@ -41,6 +41,33 @@ export type Database = {
           },
         ]
       }
+      generations: {
+        Row: {
+          created_at: string
+          id: string
+          image_url: string
+          metadata: Json | null
+          prompt: string | null
+          seed: number | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          image_url: string
+          metadata?: Json | null
+          prompt?: string | null
+          seed?: number | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          image_url?: string
+          metadata?: Json | null
+          prompt?: string | null
+          seed?: number | null
+        }
+        Relationships: []
+      }
       messages: {
         Row: {
           chat_id: string
