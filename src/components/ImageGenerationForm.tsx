@@ -28,6 +28,12 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, i
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Convert strength values from percentages (0-100) to decimals (0-1)
+    const normalizedLoraStrength = loraStrength / 100;
+    const normalizedDepthStrength = depthStrength / 100;
+    const normalizedSoftEdgeStrength = softEdgeStrength / 100;
+    
     onGenerate({
       prompt,
       promptCount,
@@ -35,9 +41,9 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, i
       dynamicPrompt,
       dynamicStartingImage,
       loraUrl,
-      loraStrength: loraStrength / 100,
-      depthStrength: depthStrength / 100,
-      softEdgeStrength: softEdgeStrength / 100,
+      loraStrength: normalizedLoraStrength,
+      depthStrength: normalizedDepthStrength,
+      softEdgeStrength: normalizedSoftEdgeStrength,
       startingImage,
       controlImageUrl,
       depthControlImageUrl

@@ -73,9 +73,9 @@ const Index = () => {
           url: record.image_url,
           prompt: record.prompt,
           seed: record.seed,
-          width: record.metadata?.width,
-          height: record.metadata?.height,
-          content_type: record.metadata?.content_type
+          width: record.metadata?.width ? Number(record.metadata.width) : undefined,
+          height: record.metadata?.height ? Number(record.metadata.height) : undefined,
+          content_type: record.metadata?.content_type ? String(record.metadata.content_type) : undefined
         }));
         
         setGeneratedImages(dbImages);
@@ -135,6 +135,17 @@ const Index = () => {
       const controlImageUrl = formData.controlImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png";
       const depthControlImageUrl = formData.depthControlImageUrl || "https://v3.fal.media/files/lion/Xq7VLnpg89HEfHh_spBTN_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png";
       
+      // Convert strengths to appropriate values (0-1 range)
+      const loraStrength = formData.loraStrength;
+      const depthStrength = formData.depthStrength;
+      const softEdgeStrength = formData.softEdgeStrength;
+      
+      console.log("Using strengths:", {
+        loraStrength,
+        depthStrength,
+        softEdgeStrength
+      });
+      
       const result = await fal.subscribe("fal-ai/flux-general", {
         input: {
           prompt: formData.prompt,
@@ -142,8 +153,8 @@ const Index = () => {
           controlnets: [{
             path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
             end_percentage: 0.5,
-            conditioning_scale: formData.softEdgeStrength,
-            control_image_url: controlImageUrl
+            conditioning_scale: softEdgeStrength,
+            control_image: controlImageUrl
           }],
           controlnet_unions: [],
           ip_adapters: [],
@@ -159,13 +170,13 @@ const Index = () => {
           control_loras: [{
             path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
             preprocess: "depth",
-            control_image_url: depthControlImageUrl,
-            scale: formData.loraStrength.toString()
+            control_image: depthControlImageUrl,
+            scale: depthStrength.toString()
           }],
           image_size: "portrait_16_9",
           loras: [{
             path: formData.loraUrl,
-            scale: formData.loraStrength.toString()
+            scale: loraStrength.toString()
           }]
         },
         logs: true,
@@ -205,12 +216,15 @@ const Index = () => {
         };
         
         try {
+          // Truncate the seed value if it's too large for the integer type
+          const truncatedSeed = image.seed ? (image.seed % 2147483647) : null;
+          
           const { data, error } = await supabase
             .from('generations')
             .insert({
               image_url: image.url,
               prompt: image.prompt,
-              seed: image.seed,
+              seed: truncatedSeed,
               metadata: metadata
             })
             .select();
