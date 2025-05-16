@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import ImageGenerationForm from "@/components/ImageGenerationForm";
 import ImageGallery from "@/components/ImageGallery";
@@ -27,6 +26,9 @@ const placeholderImages = Array(8).fill(null).map((_, index) => ({
   url: "/placeholder.svg",
   prompt: "Placeholder image",
 }));
+
+// Valid LoRA URLs to use as fallback
+const DEFAULT_LORA_URL = "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors";
 
 interface GeneratedImage {
   id?: string;
@@ -151,6 +153,9 @@ const Index = () => {
         softEdgeStrength
       });
       
+      // Verify if the provided LoRA URL is valid or use default
+      const loraUrl = formData.loraUrl || DEFAULT_LORA_URL;
+      
       const result = await fal.subscribe("fal-ai/flux-general", {
         input: {
           prompt: formData.prompt,
@@ -159,7 +164,8 @@ const Index = () => {
             path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
             end_percentage: 0.5,
             conditioning_scale: softEdgeStrength,
-            control_image_url: controlImageUrl
+            // Use control_image instead of control_image_url to match expected API parameter
+            control_image: controlImageUrl
           }],
           controlnet_unions: [],
           ip_adapters: [],
@@ -175,12 +181,13 @@ const Index = () => {
           control_loras: [{
             path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
             preprocess: "depth",
-            control_image_url: depthControlImageUrl,
+            // Use control_image instead of control_image_url
+            control_image: depthControlImageUrl,
             scale: depthStrength.toString()
           }],
           image_size: "portrait_16_9",
           loras: [{
-            path: formData.loraUrl,
+            path: loraUrl,
             scale: loraStrength.toString()
           }]
         },
@@ -206,13 +213,15 @@ const Index = () => {
       }));
       
       // Save the generated images to the database
+      const savedImages = [];
+      
       for (const image of newImages) {
         // Create metadata object with all settings
         const metadata = {
           width: image.width,
           height: image.height,
           content_type: image.content_type,
-          loraUrl: formData.loraUrl,
+          loraUrl: loraUrl,
           loraStrength: formData.loraStrength,
           depthStrength: formData.depthStrength,
           softEdgeStrength: formData.softEdgeStrength,
@@ -238,20 +247,26 @@ const Index = () => {
             console.error('Error saving image to database:', error);
           } else if (data && data.length > 0) {
             // Add the database id to the image object
-            image.id = data[0].id;
+            const savedImage = { ...image, id: data[0].id };
+            savedImages.push(savedImage);
           }
         } catch (dbError) {
           console.error('Error saving image to database:', dbError);
+          // Still keep the image in the list even if it wasn't saved to DB
+          savedImages.push(image);
         }
       }
       
       // Replace placeholders if this is the first real generation
       if (showPlaceholders) {
-        setGeneratedImages(newImages);
+        setGeneratedImages(savedImages.length > 0 ? savedImages : newImages);
         setShowPlaceholders(false);
       } else {
         // Otherwise, add new images to the beginning of the array
-        setGeneratedImages(prevImages => [...newImages, ...prevImages]);
+        setGeneratedImages(prevImages => [
+          ...(savedImages.length > 0 ? savedImages : newImages), 
+          ...prevImages
+        ]);
       }
       
       toast.success("Images generated successfully!");
