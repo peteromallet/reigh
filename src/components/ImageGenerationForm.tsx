@@ -61,7 +61,7 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
   { onGenerate, isGenerating = false, hasApiKey = true }, 
   ref
 ) => {
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState("stupid wanker");
   const [promptCount, setPromptCount] = useState(1);
   const [imagesPerPrompt, setImagesPerPrompt] = useState(1);
   const [selectedLoras, setSelectedLoras] = useState<ActiveLora[]>([]);
@@ -69,7 +69,7 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
   const [softEdgeStrength, setSoftEdgeStrength] = useState(20);
   
   const [startingImage, setStartingImage] = useState<File | null>(null);
-  const [startingImagePreview, setStartingImagePreview] = useState<string | null>(null);
+  const [startingImagePreview, setStartingImagePreview] = useState<string | null>("https://v3.fal.media/files/kangaroo/RVIpigZlg_QbbNrVJbaBQ_d473ed359fd74cd0aeb462573ac92b47.png");
   const [isLoraModalOpen, setIsLoraModalOpen] = useState(false);
   const [availableLoras, setAvailableLoras] = useState<LoraModel[]>([]);
   

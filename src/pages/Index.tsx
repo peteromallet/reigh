@@ -250,7 +250,7 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto py-8 px-4 relative">
-        <h1 className="text-3xl font-bold mb-8 text-center">AI Image Generator</h1>
+        
         <SettingsModal currentFalApiKey={apiKey} onSaveApiKeys={handleSaveApiKeys}/>
         <div className="space-y-8">
           <div className="bg-white rounded-xl shadow overflow-hidden">
