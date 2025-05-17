@@ -1,5 +1,5 @@
-import React from "react";
-import { Trash2, Info } from "lucide-react";
+import React, { useState } from "react";
+import { Trash2, Info, Settings, CheckCircle, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { 
   Tooltip, 
@@ -7,6 +7,7 @@ import {
   TooltipProvider, 
   TooltipTrigger 
 } from "@/components/ui/tooltip";
+import FullscreenImageModal from "@/components/ui/FullscreenImageModal";
 
 // Define the structure for individual LoRA details within metadata
 export interface MetadataLora {
@@ -20,7 +21,6 @@ export interface MetadataLora {
 // Define the structure of the metadata object we expect for display
 export interface DisplayableMetadata {
   prompt?: string;
-  promptCount?: number;
   imagesPerPrompt?: number;
   seed?: number;
   width?: number;
@@ -60,7 +60,6 @@ const formatMetadataForDisplay = (metadata: DisplayableMetadata): string => {
   let displayText = "";
   if (metadata.prompt) displayText += `Prompt: ${metadata.prompt}\n`;
   if (metadata.seed) displayText += `Seed: ${metadata.seed}\n`;
-  if (metadata.promptCount) displayText += `Prompt Count: ${metadata.promptCount}\n`;
   if (metadata.imagesPerPrompt) displayText += `Images/Prompt: ${metadata.imagesPerPrompt}\n`;
   if (metadata.width && metadata.height) displayText += `Dimensions: ${metadata.width}x${metadata.height}\n`;
   if (metadata.num_inference_steps) displayText += `Steps: ${metadata.num_inference_steps}\n`;
@@ -87,6 +86,19 @@ const formatMetadataForDisplay = (metadata: DisplayableMetadata): string => {
 };
 
 const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeleting, onApplySettings }) => {
+  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+
+  const handleOpenLightbox = (imageUrl: string) => {
+    setLightboxImageUrl(imageUrl);
+    setIsLightboxOpen(true);
+  };
+
+  const handleCloseLightbox = () => {
+    setIsLightboxOpen(false);
+    setLightboxImageUrl(null);
+  };
+
   return (
     <TooltipProvider delayDuration={300}>
       <div className="space-y-4">
@@ -113,8 +125,9 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeletin
                     <img
                       src={image.url}
                       alt={image.prompt || `Generated image ${index + 1}`}
-                      className="absolute inset-0 w-full h-full object-contain"
-                      loading="lazy"
+                      className="absolute inset-0 w-full h-full object-cover group-hover:opacity-80 transition-opacity duration-300"
+                      onDoubleClick={() => handleOpenLightbox(image.url)}
+                      style={{ cursor: 'pointer' }}
                     />
                   </div>
                 </div>
@@ -192,6 +205,11 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeletin
           })}
         </div>
       </div>
+      
+      <FullscreenImageModal 
+        imageUrl={lightboxImageUrl} 
+        onClose={handleCloseLightbox} 
+      />
     </TooltipProvider>
   );
 };
