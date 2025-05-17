@@ -23,8 +23,24 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, i
   const [depthStrength, setDepthStrength] = useState(60); // Default to 0.6 as per the example
   const [softEdgeStrength, setSoftEdgeStrength] = useState(20); // Default to 0.2 as per the example control conditioning
   const [startingImage, setStartingImage] = useState<File | null>(null);
-  const [controlImageUrl, setControlImageUrl] = useState("");
-  const [depthControlImageUrl, setDepthControlImageUrl] = useState("");
+  const [startingImagePreview, setStartingImagePreview] = useState<string | null>(null);
+
+  const handleStartingImageChange = (file: File | null) => {
+    setStartingImage(file);
+    
+    // If file is null, clear the preview
+    if (!file) {
+      setStartingImagePreview(null);
+      return;
+    }
+    
+    // Create preview URL for the local image
+    const reader = new FileReader();
+    reader.onload = () => {
+      setStartingImagePreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,8 +61,6 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, i
       depthStrength: normalizedDepthStrength,
       softEdgeStrength: normalizedSoftEdgeStrength,
       startingImage,
-      controlImageUrl,
-      depthControlImageUrl
     });
   };
 
@@ -140,7 +154,8 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, i
       {/* Right Column */}
       <div className="space-y-6">
         <ImageUpload 
-          onImageSelect={setStartingImage}
+          onImageSelect={handleStartingImageChange}
+          existingImage={startingImagePreview}
           label="STARTING IMAGE UPLOAD"
           className="h-[240px]"
         />

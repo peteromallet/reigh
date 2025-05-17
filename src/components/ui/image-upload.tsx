@@ -1,21 +1,31 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { Upload } from "lucide-react";
+import { Upload, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface ImageUploadProps {
   onImageSelect: (file: File | null) => void;
   className?: string;
   label?: string;
+  existingImage?: string | null;
 }
 
 const ImageUpload = ({
   onImageSelect,
   className,
   label = "Upload Image",
+  existingImage = null,
 }: ImageUploadProps) => {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(existingImage);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Update preview if existingImage prop changes
+  useEffect(() => {
+    if (existingImage) {
+      setPreviewUrl(existingImage);
+    }
+  }, [existingImage]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
@@ -30,10 +40,12 @@ const ImageUpload = ({
         setPreviewUrl(reader.result as string);
       };
       reader.readAsDataURL(file);
-    } else {
-      onImageSelect(null);
-      setPreviewUrl(null);
     }
+  };
+
+  const handleRemove = () => {
+    onImageSelect(null);
+    setPreviewUrl(null);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -82,6 +94,19 @@ const ImageUpload = ({
                   alt="Preview"
                   className="w-full h-auto object-contain max-h-48"
                 />
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="icon"
+                  className="absolute top-0 right-0 rounded-full transform translate-x-1/2 -translate-y-1/2"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleRemove();
+                  }}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
               </div>
             ) : (
               <div className="text-center p-6">
