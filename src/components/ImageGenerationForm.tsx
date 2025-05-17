@@ -186,11 +186,6 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
 
   const generatePromptId = () => `prompt-${promptIdCounter.current++}`;
   
-  useEffect(() => {
-    const initialPromptId = generatePromptId();
-    setPrompts([{ id: initialPromptId, fullPrompt: "A majestic cat astronaut exploring a vibrant nebula, artstation", shortPrompt: "Cat Astronaut" }]);
-  }, []);
-
   const processAndCropImageUrl = async (imageUrl: string) => { 
     try {
       toast.info("Processing applied starting image...");
@@ -268,24 +263,23 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
 
   useEffect(() => {
     const savedSettingsRaw = localStorage.getItem(FORM_SETTINGS_KEY);
+    let loadedPrompts: PromptEntry[] | null = null;
+
     if (savedSettingsRaw) {
       try {
         const parsedSettings = JSON.parse(savedSettingsRaw);
         const settingsToLoad = parsedSettings as PersistedFormSettings & { prompt?: string }; 
 
         if (settingsToLoad.prompts && settingsToLoad.prompts.length > 0) {
-            setPrompts(settingsToLoad.prompts.map(p => ({...p, id: p.id || generatePromptId() })));
+            loadedPrompts = settingsToLoad.prompts.map(p => ({...p, id: p.id || generatePromptId() }));
         } else if (settingsToLoad.prompt && typeof settingsToLoad.prompt === 'string') { 
              const short = settingsToLoad.prompt.substring(0, 30) + (settingsToLoad.prompt.length > 30 ? "..." : "");
-             setPrompts([{ id: generatePromptId(), fullPrompt: settingsToLoad.prompt, shortPrompt: short }]);
-        } else {
-            const initialPromptIdFallback = generatePromptId();
-            setPrompts([{ id: initialPromptIdFallback, fullPrompt: "A majestic cat astronaut exploring a vibrant nebula, artstation", shortPrompt: "Cat Astronaut" }]);
+             loadedPrompts = [{ id: generatePromptId(), fullPrompt: settingsToLoad.prompt, shortPrompt: short }];
         }
         
-        if (settingsToLoad.prompts && settingsToLoad.prompts.length > 0) {
+        if (loadedPrompts && loadedPrompts.length > 0) {
             let maxIdNum = 0; 
-            settingsToLoad.prompts.forEach(p => {
+            loadedPrompts.forEach(p => {
                 const idStr = p.id || "";
                 let idPart = idStr.startsWith('prompt-') ? idStr.substring('prompt-'.length) : idStr;
                 if (idStr === 'initial-0') idPart = '0';
@@ -295,7 +289,7 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
             });
             promptIdCounter.current = maxIdNum + 1;
         } else {
-            promptIdCounter.current = prompts.length > 0 && prompts[0].id.startsWith('prompt-') ? parseInt(prompts[0].id.split('-')[1]) + 1 : 1;
+            promptIdCounter.current = 1; 
         }
 
         if (settingsToLoad.imagesPerPrompt !== undefined) setImagesPerPrompt(settingsToLoad.imagesPerPrompt);
@@ -309,10 +303,15 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
       } catch (error) { 
           console.error("Error loading saved form settings:", error); 
           localStorage.removeItem(FORM_SETTINGS_KEY);
-          const initialPromptIdError = generatePromptId();
-          setPrompts([{ id: initialPromptIdError, fullPrompt: "A majestic cat astronaut exploring a vibrant nebula, artstation", shortPrompt: "Cat Astronaut" }]);
       }
+    }
+
+    if (loadedPrompts && loadedPrompts.length > 0) {
+        setPrompts(loadedPrompts);
     } else {
+        promptIdCounter.current = 1; 
+        const initialPromptId = generatePromptId(); 
+        setPrompts([{ id: initialPromptId, fullPrompt: "A majestic cat astronaut exploring a vibrant nebula, artstation", shortPrompt: "Cat Astronaut" }]);
         defaultsApplied.current = false;
     }
     hasLoadedFromStorage.current = true;
