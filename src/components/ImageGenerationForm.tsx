@@ -7,6 +7,7 @@ import { LoraSelectorModal, LoraModel } from "@/components/LoraSelectorModal";
 import { DisplayableMetadata } from "@/components/ImageGallery";
 import { X, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
+import { cropImageToClosestAspectRatio, CropResult } from "@/utils/imageCropper";
 
 const FORM_SETTINGS_KEY = 'artfulPaneCraftFormSettings';
 
@@ -70,6 +71,7 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
   
   const [startingImage, setStartingImage] = useState<File | null>(null);
   const [startingImagePreview, setStartingImagePreview] = useState<string | null>("https://v3.fal.media/files/kangaroo/RVIpigZlg_QbbNrVJbaBQ_d473ed359fd74cd0aeb462573ac92b47.png");
+  const [determinedApiImageSize, setDeterminedApiImageSize] = useState<string | null>(null);
   const [isLoraModalOpen, setIsLoraModalOpen] = useState(false);
   const [availableLoras, setAvailableLoras] = useState<LoraModel[]>([]);
   
@@ -186,18 +188,49 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
   const handleRemoveLora = (loraIdToRemove: string) => setSelectedLoras(prevLoras => prevLoras.filter(lora => lora.id !== loraIdToRemove));
   const handleLoraStrengthChange = (loraId: string, newStrength: number) => setSelectedLoras(prevLoras => prevLoras.map(lora => lora.id === loraId ? { ...lora, strength: newStrength } : lora));
 
-  const processFile = (file: File | null) => {
+  const processFile = async (file: File | null) => {
     if (file && file.type.startsWith('image/')) {
-      setStartingImage(file);
-      const reader = new FileReader();
-      reader.onload = () => {
-        setStartingImagePreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        toast.info("Processing uploaded image...");
+        const cropResult = await cropImageToClosestAspectRatio(file);
+        if (cropResult) {
+          setStartingImage(cropResult.croppedFile);
+          setStartingImagePreview(cropResult.croppedImageUrl);
+          setDeterminedApiImageSize(cropResult.apiImageSize);
+          toast.success("Image processed and cropped to best fit!");
+        } else {
+          // Fallback to original image if cropping fails or returns null
+          setStartingImage(file);
+          const reader = new FileReader();
+          reader.onload = () => {
+            setStartingImagePreview(reader.result as string);
+          };
+          reader.readAsDataURL(file);
+          setDeterminedApiImageSize(null); // Reset determined size
+          toast.info("Could not auto-crop image, using original.");
+        }
+      } catch (error) {
+        console.error("Error processing/cropping image:", error);
+        toast.error("Error processing image. Using original.");
+        // Fallback to original image on error
+        setStartingImage(file);
+        const reader = new FileReader();
+        reader.onload = () => {
+          setStartingImagePreview(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+        setDeterminedApiImageSize(null); // Reset determined size
+      }
     } else if (file) {
       toast.error("Invalid file type. Please upload an image.");
       setStartingImage(null);
       setStartingImagePreview(null);
+      setDeterminedApiImageSize(null);
+    } else {
+      // If file is null (e.g. deselected)
+      setStartingImage(null);
+      setStartingImagePreview(null);
+      setDeterminedApiImageSize(null);
     }
   };
 
@@ -225,8 +258,12 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
     }
   };
   const handleRemoveStartingImage = () => {
+    if (startingImagePreview && startingImagePreview.startsWith("blob:")) {
+      URL.revokeObjectURL(startingImagePreview); // Clean up blob URL
+    }
     setStartingImage(null);
     setStartingImagePreview(null);
+    setDeterminedApiImageSize(null); // Reset on removal
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -244,7 +281,8 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
       prompt, promptCount, imagesPerPrompt, loras: lorasForApi, fullSelectedLoras: selectedLoras, 
       depthStrength: normalizedDepthStrength, softEdgeStrength: normalizedSoftEdgeStrength, 
       startingImage, // This will be the File object if newly selected, or null
-      appliedStartingImageUrl // This will be the URL if applied from settings, or null
+      appliedStartingImageUrl, // This will be the URL if applied from settings, or null
+      determinedApiImageSize // Pass the determined image size
     });
   };
 

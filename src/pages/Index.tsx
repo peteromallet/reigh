@@ -125,7 +125,7 @@ const Index = () => {
         base_shift: 0.5,
         max_shift: 1.15,
         scheduler: "euler",
-        image_size: "portrait_16_9",
+        image_size: formData.determinedApiImageSize || "portrait_16_9",
         loras: lorasForApi,
         controlnets: [{
           path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
@@ -250,7 +250,7 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto py-8 px-4 relative">
-        <h1 className="text-3xl font-bold mb-8 text-center">AI Image Generator</h1>
+        
         {!hasValidApiKey && (
           <div className="mb-6 p-4 border border-red-300 bg-red-50 rounded-md text-center">
             <p className="text-red-700 font-semibold">
