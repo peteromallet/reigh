@@ -12,7 +12,7 @@ import { uploadImageToStorage } from "@/utils/imageUploader";
 const initializeFalClient = () => {
   // In a production environment, this would be handled differently
   // This is a temporary solution for demonstration purposes
-  const API_KEY = sessionStorage.getItem('fal_api_key') || 
+  const API_KEY = localStorage.getItem('fal_api_key') || 
                  '0b6f1876-0aab-4b56-b821-b384b64768fa:121392c885a381f93de56d701e3d532f';
   
   fal.config({
@@ -96,9 +96,9 @@ const Index = () => {
   };
 
   const handleSaveApiKeys = (falApiKey: string, openaiApiKey: string) => {
-    // Save both API keys to sessionStorage
-    sessionStorage.setItem('fal_api_key', falApiKey);
-    sessionStorage.setItem('openai_api_key', openaiApiKey);
+    // Save both API keys to localStorage
+    localStorage.setItem('fal_api_key', falApiKey);
+    localStorage.setItem('openai_api_key', openaiApiKey);
     
     // Update the fal client with the new key
     fal.config({
@@ -181,7 +181,7 @@ const Index = () => {
             path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
             end_percentage: 0.5,
             conditioning_scale: softEdgeStrength,
-            control_image: controlImageUrl  // Fix parameter name based on API requirements
+            control_image_url: controlImageUrl  // Fixed property name
           }],
           controlnet_unions: [],
           ip_adapters: [],
@@ -197,7 +197,7 @@ const Index = () => {
           control_loras: [{
             path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
             preprocess: "depth",
-            control_image: depthControlImageUrl,  // Fix parameter name based on API requirements
+            control_image_url: depthControlImageUrl,  // Fixed property name
             scale: depthStrength.toString()
           }],
           image_size: "portrait_16_9",

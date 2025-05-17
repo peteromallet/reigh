@@ -26,20 +26,48 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const [falApiKey, setFalApiKey] = useState<string>(currentFalApiKey);
   const [openaiApiKey, setOpenaiApiKey] = useState<string>("");
   const [isOpen, setIsOpen] = useState(false);
+  const [isFalKeyMasked, setIsFalKeyMasked] = useState(false);
+  const [isOpenAIKeyMasked, setIsOpenAIKeyMasked] = useState(false);
 
-  // Load OpenAI API key from sessionStorage if it exists
+  // Load API keys from localStorage if they exist
   useEffect(() => {
-    const storedOpenaiKey = sessionStorage.getItem('openai_api_key') || "";
+    // For Fal.ai API key
+    if (currentFalApiKey && currentFalApiKey !== '0b6f1876-0aab-4b56-b821-b384b64768fa:121392c885a381f93de56d701e3d532f') {
+      setIsFalKeyMasked(true);
+    }
+    
+    // For OpenAI API key
+    const storedOpenaiKey = localStorage.getItem('openai_api_key') || "";
     if (storedOpenaiKey) {
       setOpenaiApiKey(storedOpenaiKey);
+      setIsOpenAIKeyMasked(true);
     }
-  }, []);
+  }, [currentFalApiKey]);
 
   const handleSave = () => {
     // Save the API keys and close the modal
-    onSaveApiKeys(falApiKey, openaiApiKey);
+    // If masked, don't override with masked value
+    const newFalKey = isFalKeyMasked && falApiKey === "••••••••••••••••••••••" 
+      ? currentFalApiKey 
+      : falApiKey;
+      
+    const newOpenAIKey = isOpenAIKeyMasked && openaiApiKey === "••••••••••••••••••••••" 
+      ? localStorage.getItem('openai_api_key') || "" 
+      : openaiApiKey;
+    
+    onSaveApiKeys(newFalKey, newOpenAIKey);
     setIsOpen(false);
     toast.success("Settings saved successfully");
+  };
+
+  const handleFalKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFalApiKey(e.target.value);
+    setIsFalKeyMasked(false);
+  };
+
+  const handleOpenAIKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setOpenaiApiKey(e.target.value);
+    setIsOpenAIKeyMasked(false);
   };
 
   return (
@@ -68,8 +96,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             <Input
               id="fal-api-key"
               type="text"
-              value={falApiKey}
-              onChange={(e) => setFalApiKey(e.target.value)}
+              value={isFalKeyMasked ? "••••••••••••••••••••••" : falApiKey}
+              onChange={handleFalKeyChange}
               placeholder="Enter your Fal.ai API key"
               className="w-full"
             />
@@ -82,8 +110,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             <Input
               id="openai-api-key"
               type="text"
-              value={openaiApiKey}
-              onChange={(e) => setOpenaiApiKey(e.target.value)}
+              value={isOpenAIKeyMasked ? "••••••••••••••••••••••" : openaiApiKey}
+              onChange={handleOpenAIKeyChange}
               placeholder="Enter your OpenAI API key"
               className="w-full"
             />
