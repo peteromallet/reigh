@@ -6,6 +6,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { SliderWithValue } from "@/components/ui/slider-with-value";
 import { ImageUpload } from "@/components/ui/image-upload";
 import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertCircle } from "lucide-react";
 
 interface ImageGenerationFormProps {
   onGenerate: (formData: any) => void;
@@ -77,7 +79,14 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, i
           <Label htmlFor="dynamicPrompt">Dynamically generate prompt</Label>
         </div>
 
-        {!dynamicPrompt && (
+        {dynamicPrompt ? (
+          <Alert variant="default" className="bg-yellow-50 border-yellow-200">
+            <AlertCircle className="h-4 w-4 text-yellow-600" />
+            <AlertDescription className="text-yellow-800">
+              Dynamic prompt generation is not yet implemented
+            </AlertDescription>
+          </Alert>
+        ) : (
           <div>
             <Label htmlFor="prompt" className="text-lg font-medium">Prompt:</Label>
             <Textarea
@@ -105,7 +114,7 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, i
           </div>
 
           <div>
-            <Label htmlFor="imagesPerPrompt">Images per prompt</Label>
+            <Label htmlFor="imagesPerPrompt">Images to generate</Label>
             <Input
               id="imagesPerPrompt"
               type="number"
@@ -170,6 +179,15 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, i
           />
           <Label htmlFor="dynamicStartingImage">Dynamic starting image</Label>
         </div>
+        
+        {dynamicStartingImage && (
+          <Alert variant="default" className="bg-yellow-50 border-yellow-200">
+            <AlertCircle className="h-4 w-4 text-yellow-600" />
+            <AlertDescription className="text-yellow-800">
+              Dynamic starting image is not yet implemented
+            </AlertDescription>
+          </Alert>
+        )}
 
         <button
           type="submit"

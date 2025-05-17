@@ -180,7 +180,7 @@ const Index = () => {
             path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
             end_percentage: 0.5,
             conditioning_scale: softEdgeStrength,
-            control_image: controlImageUrl // Using the property accepted by the API
+            control_image_url: controlImageUrl // Corrected property name
           }],
           controlnet_unions: [],
           ip_adapters: [],
@@ -196,7 +196,7 @@ const Index = () => {
           control_loras: [{
             path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
             preprocess: "depth",
-            control_image: depthControlImageUrl, // Using the property accepted by the API
+            control_image_url: depthControlImageUrl, // Corrected property name
             scale: depthStrength.toString()
           }],
           image_size: "portrait_16_9",
