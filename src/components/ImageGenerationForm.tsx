@@ -1,13 +1,18 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { SliderWithValue } from "@/components/ui/slider-with-value";
 import { LoraSelectorModal, LoraModel } from "@/components/LoraSelectorModal";
-import { X } from "lucide-react";
+import { DisplayableMetadata } from "@/components/ImageGallery";
+import { X, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 
 const FORM_SETTINGS_KEY = 'artfulPaneCraftFormSettings';
+
+export interface ImageGenerationFormHandles {
+  applySettings: (settings: DisplayableMetadata) => void;
+}
 
 interface ImageGenerationFormProps {
   onGenerate: (formData: any) => void;
@@ -46,12 +51,16 @@ interface PersistedFormSettings {
   // startingImagePreview is not persisted to avoid issues with File object restoration
 }
 
-const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ 
-  onGenerate, 
-  isGenerating = false, 
-  hasApiKey = true 
-}) => {
-  // Initialize state with defaults, will be overridden by localStorage if available
+const defaultLorasConfig = [
+  { modelId: "Shakker-Labs/FLUX.1-dev-LoRA-add-details", strength: 96 },
+  { modelId: "Shakker-Labs/FLUX.1-dev-LoRA-AntiBlur", strength: 96 },
+  { modelId: "strangerzonehf/Flux-Super-Realism-LoRA", strength: 53 },
+];
+
+const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerationFormProps>((
+  { onGenerate, isGenerating = false, hasApiKey = true }, 
+  ref
+) => {
   const [prompt, setPrompt] = useState("");
   const [promptCount, setPromptCount] = useState(1);
   const [imagesPerPrompt, setImagesPerPrompt] = useState(1);
@@ -63,6 +72,51 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({
   const [startingImagePreview, setStartingImagePreview] = useState<string | null>(null);
   const [isLoraModalOpen, setIsLoraModalOpen] = useState(false);
   const [availableLoras, setAvailableLoras] = useState<LoraModel[]>([]);
+  
+  const hasLoadedFromStorage = useRef(false);
+  const defaultsApplied = useRef(false);
+
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+
+  // Expose applySettings function via ref
+  useImperativeHandle(ref, () => ({
+    applySettings: (settings: DisplayableMetadata) => {
+      toast.info("Applying settings from selected image...");
+      if (settings.prompt) setPrompt(settings.prompt);
+      if (settings.promptCount) setPromptCount(settings.promptCount);
+      if (settings.imagesPerPrompt) setImagesPerPrompt(settings.imagesPerPrompt);
+      if (settings.depthStrength !== undefined) setDepthStrength(Math.round(settings.depthStrength * 100));
+      if (settings.softEdgeStrength !== undefined) setSoftEdgeStrength(Math.round(settings.softEdgeStrength * 100));
+      
+      if (settings.activeLoras && settings.activeLoras.length > 0 && availableLoras.length > 0) {
+        const newSelectedLoras: ActiveLora[] = [];
+        settings.activeLoras.forEach(metaLora => {
+          const foundFullLora = availableLoras.find(al => al["Model ID"] === metaLora.id || al.Name === metaLora.name || al["Model Files"].some(f => f.url === metaLora.path) );
+          if (foundFullLora) {
+            newSelectedLoras.push({
+              id: foundFullLora["Model ID"],
+              name: foundFullLora.Name !== "N/A" ? foundFullLora.Name : foundFullLora["Model ID"],
+              path: foundFullLora["Model Files"] && foundFullLora["Model Files"].length > 0 ? foundFullLora["Model Files"][0].url : metaLora.path, 
+              strength: metaLora.strength, 
+              previewImageUrl: foundFullLora.Images && foundFullLora.Images.length > 0 ? foundFullLora.Images[0].url : metaLora.previewImageUrl
+            });
+          }
+        });
+        setSelectedLoras(newSelectedLoras);
+      } else if (settings.activeLoras && settings.activeLoras.length === 0) {
+        setSelectedLoras([]); 
+      }
+
+      // Handle starting image URL from metadata
+      if (settings.userProvidedImageUrl) {
+        setStartingImagePreview(settings.userProvidedImageUrl);
+        setStartingImage(null); // Clear any selected File object
+      } else {
+        setStartingImagePreview(null);
+        setStartingImage(null);
+      }
+    }
+  }));
 
   // Load settings from localStorage on initial mount
   useEffect(() => {
@@ -73,111 +127,124 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({
         if (savedSettings.prompt !== undefined) setPrompt(savedSettings.prompt);
         if (savedSettings.promptCount !== undefined) setPromptCount(savedSettings.promptCount);
         if (savedSettings.imagesPerPrompt !== undefined) setImagesPerPrompt(savedSettings.imagesPerPrompt);
-        if (savedSettings.selectedLoras !== undefined) setSelectedLoras(savedSettings.selectedLoras);
+        if (savedSettings.selectedLoras !== undefined && savedSettings.selectedLoras.length > 0) {
+            setSelectedLoras(savedSettings.selectedLoras);
+            defaultsApplied.current = true; 
+        }
         if (savedSettings.depthStrength !== undefined) setDepthStrength(savedSettings.depthStrength);
         if (savedSettings.softEdgeStrength !== undefined) setSoftEdgeStrength(savedSettings.softEdgeStrength);
-      } catch (error) {
-        console.error("Error loading saved form settings from localStorage:", error);
-        localStorage.removeItem(FORM_SETTINGS_KEY); // Clear corrupted settings
-      }
+      } catch (error) { console.error("Error loading saved form settings:", error); localStorage.removeItem(FORM_SETTINGS_KEY); }
     }
+    hasLoadedFromStorage.current = true;
   }, []);
 
   // Save settings to localStorage whenever they change
   useEffect(() => {
-    const currentSettings: PersistedFormSettings = {
-      prompt,
-      promptCount,
-      imagesPerPrompt,
-      selectedLoras,
-      depthStrength,
-      softEdgeStrength,
-    };
-    localStorage.setItem(FORM_SETTINGS_KEY, JSON.stringify(currentSettings));
+    if (hasLoadedFromStorage.current) { 
+      const currentSettings: PersistedFormSettings = { prompt, promptCount, imagesPerPrompt, selectedLoras, depthStrength, softEdgeStrength };
+      localStorage.setItem(FORM_SETTINGS_KEY, JSON.stringify(currentSettings));
+    }
   }, [prompt, promptCount, imagesPerPrompt, selectedLoras, depthStrength, softEdgeStrength]);
 
-
-  // Fetch available LoRAs (this doesn't need to be persisted, just fetched on load)
+  // Fetch available LoRAs
   useEffect(() => {
-    fetch('/data/loras.json')
-      .then(response => {
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        return response.json();
-      })
-      .then((data: LoraData) => {
-        setAvailableLoras(data.models || []); 
-      })
-      .catch(error => {
-        console.error("Error fetching LoRA data:", error);
-        toast.error("Failed to load LoRA models.");
-      });
+    fetch('/data/loras.json').then(response => response.json()).then((data: LoraData) => setAvailableLoras(data.models || []))
+      .catch(error => { console.error("Error fetching LoRA data:", error); toast.error("Failed to load LoRA model list."); });
   }, []);
 
-  const handleAddLora = (loraToAdd: LoraModel) => {
-    if (selectedLoras.find(sl => sl.id === loraToAdd["Model ID"])) {
-      toast.info(`LoRA "${loraToAdd.Name !== "N/A" ? loraToAdd.Name : loraToAdd["Model ID"]}" is already added.`);
-      return;
-    }
-    if (loraToAdd["Model Files"] && loraToAdd["Model Files"].length > 0) {
-      setSelectedLoras(prevLoras => [
-        ...prevLoras,
-        {
-          id: loraToAdd["Model ID"],
-          name: loraToAdd.Name !== "N/A" ? loraToAdd.Name : loraToAdd["Model ID"],
-          path: loraToAdd["Model Files"][0].url,
-          strength: 40, 
-          previewImageUrl: loraToAdd.Images && loraToAdd.Images.length > 0 ? loraToAdd.Images[0].url : undefined,
+  // Apply default LoRAs
+  useEffect(() => {
+    if (hasLoadedFromStorage.current && !defaultsApplied.current && availableLoras.length > 0) {
+      const newSelectedLoras: ActiveLora[] = [];
+      for (const defaultConfig of defaultLorasConfig) {
+        const foundLora = availableLoras.find(lora => lora["Model ID"] === defaultConfig.modelId);
+        if (foundLora && foundLora["Model Files"] && foundLora["Model Files"].length > 0) {
+          newSelectedLoras.push({
+            id: foundLora["Model ID"], name: foundLora.Name !== "N/A" ? foundLora.Name : foundLora["Model ID"],
+            path: foundLora["Model Files"][0].url, strength: defaultConfig.strength,
+            previewImageUrl: foundLora.Images && foundLora.Images.length > 0 ? foundLora.Images[0].url : undefined,
+          });
         }
-      ]);
-      toast.success(`LoRA "${loraToAdd.Name !== "N/A" ? loraToAdd.Name : loraToAdd["Model ID"]}" added.`);
-    } else {
-      toast.error("Selected LoRA has no model file specified.");
+      }
+      if (newSelectedLoras.length > 0) setSelectedLoras(newSelectedLoras);
+      defaultsApplied.current = true; 
     }
+  }, [availableLoras]);
+
+  const handleAddLora = (loraToAdd: LoraModel) => {
+    if (selectedLoras.find(sl => sl.id === loraToAdd["Model ID"])) { toast.info(`LoRA already added.`); return; }
+    if (loraToAdd["Model Files"] && loraToAdd["Model Files"].length > 0) {
+      setSelectedLoras(prevLoras => [ ...prevLoras, {
+          id: loraToAdd["Model ID"], name: loraToAdd.Name !== "N/A" ? loraToAdd.Name : loraToAdd["Model ID"],
+          path: loraToAdd["Model Files"][0].url, strength: 40, 
+          previewImageUrl: loraToAdd.Images && loraToAdd.Images.length > 0 ? loraToAdd.Images[0].url : undefined,
+        }]);
+      toast.success(`LoRA added.`);
+    } else { toast.error("Selected LoRA has no model file specified."); }
   };
 
-  const handleRemoveLora = (loraIdToRemove: string) => {
-    setSelectedLoras(prevLoras => prevLoras.filter(lora => lora.id !== loraIdToRemove));
-  };
+  const handleRemoveLora = (loraIdToRemove: string) => setSelectedLoras(prevLoras => prevLoras.filter(lora => lora.id !== loraIdToRemove));
+  const handleLoraStrengthChange = (loraId: string, newStrength: number) => setSelectedLoras(prevLoras => prevLoras.map(lora => lora.id === loraId ? { ...lora, strength: newStrength } : lora));
 
-  const handleLoraStrengthChange = (loraId: string, newStrength: number) => {
-    setSelectedLoras(prevLoras => 
-      prevLoras.map(lora => 
-        lora.id === loraId ? { ...lora, strength: newStrength } : lora
-      )
-    );
-  };
-
-  const handleStartingImageChange = (file: File | null) => {
-    setStartingImage(file);
-    if (!file) {
+  const processFile = (file: File | null) => {
+    if (file && file.type.startsWith('image/')) {
+      setStartingImage(file);
+      const reader = new FileReader();
+      reader.onload = () => {
+        setStartingImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    } else if (file) {
+      toast.error("Invalid file type. Please upload an image.");
+      setStartingImage(null);
       setStartingImagePreview(null);
-      return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setStartingImagePreview(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+  };
+
+  const handleStartingImageChangeViaInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    processFile(e.target.files ? e.target.files[0] : null);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(true);
+  };
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+  };
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processFile(e.dataTransfer.files[0]);
+      e.dataTransfer.clearData();
+    }
+  };
+  const handleRemoveStartingImage = () => {
+    setStartingImage(null);
+    setStartingImagePreview(null);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const lorasForApi = selectedLoras.map(lora => ({
-      path: lora.path,
-      scale: (lora.strength / 100).toString(),
-    }));    
+    const lorasForApi = selectedLoras.map(lora => ({ path: lora.path, scale: (lora.strength / 100).toString() }));    
     const normalizedDepthStrength = depthStrength / 100;
     const normalizedSoftEdgeStrength = softEdgeStrength / 100;
+    
+    // Determine if the preview is a previously uploaded URL (not base64)
+    const appliedStartingImageUrl = (startingImagePreview && !startingImagePreview.startsWith('data:image')) 
+                                      ? startingImagePreview 
+                                      : null;
+
     onGenerate({
-      prompt,
-      promptCount,
-      imagesPerPrompt,
-      loras: lorasForApi,
-      depthStrength: normalizedDepthStrength, 
-      softEdgeStrength: normalizedSoftEdgeStrength,
-      startingImage,
+      prompt, promptCount, imagesPerPrompt, loras: lorasForApi, fullSelectedLoras: selectedLoras, 
+      depthStrength: normalizedDepthStrength, softEdgeStrength: normalizedSoftEdgeStrength, 
+      startingImage, // This will be the File object if newly selected, or null
+      appliedStartingImageUrl // This will be the URL if applied from settings, or null
     });
   };
 
@@ -208,9 +275,48 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({
           </div>
         </div>
         <div>
-          <Label htmlFor="startingImage">Starting Image (Optional)</Label>
-          <Input id="startingImage" type="file" accept="image/*" onChange={(e) => handleStartingImageChange(e.target.files ? e.target.files[0] : null)} className="mt-1" disabled={!hasApiKey || isGenerating}/>
-          {startingImagePreview && (<div className="mt-2"><img src={startingImagePreview} alt="Starting image preview" className="max-h-40 rounded-md" /></div>)}
+          <Label htmlFor="startingImageDropzone">Starting Image (Optional)</Label>
+          <div 
+            id="startingImageDropzone"
+            className={`mt-1 p-4 border-2 border-dashed rounded-md flex flex-col items-center justify-center text-center cursor-pointer 
+                        ${isDraggingOver ? 'border-primary bg-primary/10' : 'border-gray-300 hover:border-gray-400'}
+                        ${startingImagePreview ? 'h-auto' : 'h-32'}` // Adjust height based on preview
+            }
+            onDragEnter={handleDragOver} // Use handleDragOver for enter as well
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => document.getElementById('startingImageInput')?.click()} // Trigger hidden input click
+          >
+            <input 
+              id="startingImageInput" 
+              type="file" 
+              accept="image/*" 
+              onChange={handleStartingImageChangeViaInput} 
+              className="hidden" 
+              disabled={!hasApiKey || isGenerating}
+            />
+            {startingImagePreview ? (
+              <div className="relative">
+                <img src={startingImagePreview} alt="Starting image preview" className="max-h-40 max-w-full rounded-md object-contain" />
+                <Button 
+                  variant="destructive" 
+                  size="icon" 
+                  className="absolute top-1 right-1 h-6 w-6 p-0 rounded-full opacity-70 hover:opacity-100"
+                  onClick={(e) => { e.stopPropagation(); handleRemoveStartingImage(); }}
+                  disabled={!hasApiKey || isGenerating}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ) : (
+              <div className="text-muted-foreground">
+                <UploadCloud className="mx-auto h-10 w-10 mb-2" />
+                <p className="text-sm">Drag & drop an image here, or click to select</p>
+                {isDraggingOver && <p className="mt-2 text-sm text-primary font-semibold">Release to drop image</p>}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -282,6 +388,6 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({
       />
     </form>
   );
-};
+});
 
 export default ImageGenerationForm;

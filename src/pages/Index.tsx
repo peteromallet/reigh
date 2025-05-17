@@ -1,59 +1,47 @@
-import React, { useState, useEffect } from "react";
-import ImageGenerationForm from "@/components/ImageGenerationForm";
-import ImageGallery from "@/components/ImageGallery";
+import React, { useState, useEffect, useRef } from "react";
+import ImageGenerationForm, { ImageGenerationFormHandles } from "@/components/ImageGenerationForm";
+import ImageGallery, { GeneratedImageWithMetadata, DisplayableMetadata, MetadataLora } from "@/components/ImageGallery";
 import SettingsModal from "@/components/SettingsModal";
 import { fal } from "@fal-ai/client";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { uploadImageToStorage } from "@/utils/imageUploader";
+import { Json } from "@/integrations/supabase/types";
 
-// Initialize fal client with environment configuration
+// This interface defines the rich LoRA structure we expect from the form and want to save in metadata
+interface StoredActiveLora {
+  id: string;
+  name: string;
+  path: string;
+  strength: number; // 0-100
+  previewImageUrl?: string;
+}
+
 const initializeFalClient = () => {
-  // In a production environment, this would be handled differently
-  // This is a temporary solution for demonstration purposes
-  const API_KEY = localStorage.getItem('fal_api_key') || 
-                 '0b6f1876-0aab-4b56-b821-b384b64768fa:121392c885a381f93de56d701e3d532f';
-  
-  fal.config({
-    credentials: API_KEY
-  });
-  
+  const API_KEY = localStorage.getItem('fal_api_key') || '0b6f1876-0aab-4b56-b821-b384b64768fa:121392c885a381f93de56d701e3d532f';
+  fal.config({ credentials: API_KEY });
   return API_KEY;
 };
 
-// Mock placeholder data for generated images
-const placeholderImages = Array(8).fill(null).map((_, index) => ({
+const placeholderImages: GeneratedImageWithMetadata[] = Array(8).fill(null).map((_, index) => ({
   id: `image-${index}`,
   url: "/placeholder.svg",
   prompt: "Placeholder image",
+  metadata: { prompt: "Placeholder image" } as DisplayableMetadata
 }));
 
-// Valid LoRA URLs to use as fallback
-const DEFAULT_LORA_URL = "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors";
-
-interface GeneratedImage {
-  id?: string;
-  url: string;
-  width?: number;
-  height?: number;
-  content_type?: string;
-  prompt?: string;
-  seed?: number;
-}
-
 const Index = () => {
-  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>(placeholderImages);
+  const [generatedImages, setGeneratedImages] = useState<GeneratedImageWithMetadata[]>(placeholderImages);
   const [isGenerating, setIsGenerating] = useState(false);
   const [apiKey, setApiKey] = useState<string>('');
   const [showPlaceholders, setShowPlaceholders] = useState(true);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   
+  const imageGenerationFormRef = useRef<ImageGenerationFormHandles>(null);
+
   useEffect(() => {
-    // Initialize the API key on component mount
     const key = initializeFalClient();
     setApiKey(key);
-    
-    // Fetch previously generated images from the database
     fetchGeneratedImages();
   }, []);
   
@@ -61,77 +49,45 @@ const Index = () => {
     try {
       const { data, error } = await supabase
         .from('generations')
-        .select('*')
+        .select('id, image_url, prompt, seed, metadata')
         .order('created_at', { ascending: false });
         
-      if (error) {
-        console.error('Error fetching images:', error);
-        return;
-      }
+      if (error) { console.error('Error fetching images:', error); toast.error("Failed to load previously generated images."); return; }
       
       if (data && data.length > 0) {
-        // Map database records to the GeneratedImage format
-        const dbImages: GeneratedImage[] = data.map(record => {
-          // Handle the metadata object correctly
-          const metadata = record.metadata as Record<string, any> || {};
-          
+        const dbImages: GeneratedImageWithMetadata[] = data.map(record => {
+          const metadata = (record.metadata || {}) as DisplayableMetadata;
           return {
             id: record.id,
             url: record.image_url,
-            prompt: record.prompt,
-            seed: record.seed,
-            width: metadata.width ? Number(metadata.width) : undefined,
-            height: metadata.height ? Number(metadata.height) : undefined,
-            content_type: metadata.content_type ? String(metadata.content_type) : undefined
+            prompt: record.prompt || metadata.prompt,
+            seed: typeof record.seed === 'number' ? record.seed : (typeof metadata.seed === 'number' ? metadata.seed : undefined),
+            metadata: metadata, 
           };
         });
-        
         setGeneratedImages(dbImages);
         setShowPlaceholders(false);
       }
-    } catch (error) {
-      console.error('Error fetching images:', error);
-    }
+    } catch (error) { console.error('Error fetching images:', error); toast.error("An error occurred while fetching images."); }
   };
 
   const handleSaveApiKeys = (falApiKey: string, openaiApiKey: string) => {
-    // Save both API keys to localStorage
     localStorage.setItem('fal_api_key', falApiKey);
     localStorage.setItem('openai_api_key', openaiApiKey);
-    
-    // Update the fal client with the new key
-    fal.config({
-      credentials: falApiKey
-    });
-    
-    // Update state
+    fal.config({ credentials: falApiKey });
     setApiKey(falApiKey);
     toast.success("API keys updated successfully");
   };
   
   const handleDeleteImage = async (id: string) => {
     setIsDeleting(id);
-    
     try {
-      const { error } = await supabase
-        .from('generations')
-        .delete()
-        .eq('id', id);
-        
-      if (error) {
-        toast.error("Failed to delete image: " + error.message);
-        return;
-      }
-      
-      // Update UI after successful deletion
+      const { error } = await supabase.from('generations').delete().eq('id', id);
+      if (error) { toast.error("Failed to delete image: " + error.message); return; }
       setGeneratedImages(prevImages => prevImages.filter(image => image.id !== id));
       toast.success("Image deleted successfully");
-    } catch (error) {
-      console.error('Error deleting image:', error);
-      toast.error("Failed to delete image");
-    } finally {
-      setIsDeleting(null);
-    }
+    } catch (error) { console.error('Error deleting image:', error); toast.error("Failed to delete image");
+    } finally { setIsDeleting(null); }
   };
 
   const handleGenerate = async (formData: any) => {
@@ -140,187 +96,166 @@ const Index = () => {
     
     try {
       let userImageUrl = null;
-      
-      // If user has uploaded a starting image, upload it to Supabase storage
       if (formData.startingImage) {
         try {
-          toast.info("Uploading your image...");
           userImageUrl = await uploadImageToStorage(formData.startingImage);
           toast.success("Image uploaded successfully!");
-        } catch (uploadError) {
-          console.error("Error uploading image:", uploadError);
-          toast.error("Failed to upload image. Using default image instead.");
-        }
+        } catch (uploadError) { console.error("Error uploading image:", uploadError); toast.error("Failed to upload image. Using default image instead."); }
+      } else if (formData.appliedStartingImageUrl) {
+        userImageUrl = formData.appliedStartingImageUrl;
+        toast.info("Using previously uploaded starting image.");
       }
       
-      // Use the uploaded image URL for both control images if available
-      // Otherwise fall back to the default control images
       const controlImageUrl = userImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png";
       const depthControlImageUrl = userImageUrl || "https://v3.fal.media/files/lion/Xq7VLnpg89HEfHh_spBTN_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png";
       
-      // Use the normalized strength values directly
-      const loraStrength = formData.loraStrength;
-      const depthStrength = formData.depthStrength;
-      const softEdgeStrength = formData.softEdgeStrength;
-      
-      // console.log("Using strengths:", { // This logging might be less relevant now or need update
-      //   loraStrength,
-      //   depthStrength,
-      //   softEdgeStrength
-      // });
-      
-      // The loras array is now directly provided by ImageGenerationForm
-      const lorasForApi = formData.loras; // This should be the array like [{path: "...", scale: "..."}]
-      console.log("Using LoRAs for API:", lorasForApi);
-      // DEFAULT_LORA_URL is no longer used here directly in this way, 
-      // but could be a fallback if lorasForApi is empty and API requires at least one.
-      // For now, assuming API handles empty loras array or it's always populated if intended.
+      const lorasForApi = formData.loras as {path: string, scale: string}[]; // API formatted {path, scale 0.0-1.0 string}
+      const fullSelectedLorasForMetadata = formData.fullSelectedLoras as StoredActiveLora[]; // Rich data for metadata
+
+      const depthStrengthForApi = formData.depthStrength;
+      const softEdgeStrengthForApi = formData.softEdgeStrength;
+
+      const falInput: Record<string, any> = {
+        prompt: formData.prompt,
+        num_inference_steps: 28,
+        num_images: formData.imagesPerPrompt,
+        enable_safety_checker: true,
+        guidance_scale: 3.5,
+        real_cfg_scale: 3.5,
+        base_shift: 0.5,
+        max_shift: 1.15,
+        scheduler: "euler",
+        image_size: "portrait_16_9",
+        loras: lorasForApi,
+        controlnets: [{
+          path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
+          end_percentage: 0.5,
+          conditioning_scale: softEdgeStrengthForApi,
+          control_image_url: controlImageUrl 
+        }],
+        control_loras: [{
+          path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
+          preprocess: "depth",
+          control_image_url: depthControlImageUrl, 
+          scale: depthStrengthForApi.toString() 
+        }],
+      };
 
       const result = await fal.subscribe("fal-ai/flux-general", {
-        input: {
-          prompt: formData.prompt,
-          num_inference_steps: 28,
-          controlnets: [{
-            path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
-            end_percentage: 0.5,
-            conditioning_scale: softEdgeStrength,
-            control_image_url: controlImageUrl 
-          }],
-          controlnet_unions: [],
-          ip_adapters: [],
-          guidance_scale: 3.5,
-          real_cfg_scale: 3.5,
-          num_images: formData.imagesPerPrompt,
-          enable_safety_checker: true,
-          reference_strength: 0.65,
-          reference_end: 1,
-          base_shift: 0.5,
-          max_shift: 1.15,
-          scheduler: "euler",
-          control_loras: [{
-            path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
-            preprocess: "depth",
-            control_image_url: depthControlImageUrl, 
-            scale: depthStrength.toString()
-          }],
-          image_size: "portrait_16_9",
-          loras: lorasForApi 
-        } as any,
+        input: falInput as any, 
         logs: true,
-        onQueueUpdate: (update) => {
-          if (update.status === "IN_PROGRESS") {
-            update.logs.map((log) => log.message).forEach(console.log);
-          }
-        },
+        onQueueUpdate: (update) => { if (update.status === "IN_PROGRESS") { update.logs.map((log) => log.message).forEach(console.log); }},
       });
       
-      console.log(result.data);
-      console.log(result.requestId);
-      
-      // Process the results and create new image objects
-      const newImages = result.data.images.map((img: any) => ({
-        url: img.url,
-        width: img.width,
-        height: img.height,
-        content_type: img.content_type,
-        prompt: formData.prompt,
-        seed: result.data.seed
-      }));
-      
-      // Save the generated images to the database
-      const savedImages = [];
-      
-      for (const image of newImages) {
-        // Create metadata object with all settings
-        const metadata = {
+      const newImagesFromApi = result.data.images;
+      const responseSeed = result.data.seed;
+
+      const savedImagesToDisplay: GeneratedImageWithMetadata[] = [];
+      for (const image of newImagesFromApi) {
+        // Ensure completeMetadata.activeLoras matches the updated MetadataLora[] in DisplayableMetadata
+        const activeLorasForStorage: MetadataLora[] = fullSelectedLorasForMetadata.map(lora => ({
+          id: lora.id,
+          name: lora.name,
+          path: lora.path,
+          strength: lora.strength, // This is 0-100 from form
+          previewImageUrl: lora.previewImageUrl,
+          // `scale` is specific to the API call (0.0-1.0 string) and not what we want to store for re-application logic, which uses strength 0-100.
+          // However, MetadataLora in ImageGallery now expects `strength` (number), so this mapping is good.
+          // The `scale` for API is derived from this `strength` in ImageGenerationForm.
+        }));
+
+        const completeMetadata: DisplayableMetadata = {
           width: image.width,
           height: image.height,
           content_type: image.content_type,
-          // loraUrl: loraUrl, // This specific field might need to be rethought if storing multiple loras
-          // loraStrength: formData.loraStrength, // This specific field might need to be rethought
-          activeLoras: lorasForApi, // Store the array of active loras
-          depthStrength: formData.depthStrength, // Store as received (already normalized in form)
-          softEdgeStrength: formData.softEdgeStrength, // Store as received
-          // dynamicPrompt: formData.dynamicPrompt, // These were commented out
-          // dynamicStartingImage: formData.dynamicStartingImage, // These were commented out
-          userProvidedImageUrl: userImageUrl
+          seed: responseSeed,
+          prompt: formData.prompt,
+          promptCount: formData.promptCount,
+          imagesPerPrompt: formData.imagesPerPrompt,
+          activeLoras: activeLorasForStorage, 
+          depthStrength: depthStrengthForApi,
+          softEdgeStrength: softEdgeStrengthForApi,
+          userProvidedImageUrl: userImageUrl,
+          num_inference_steps: falInput.num_inference_steps,
+          guidance_scale: falInput.guidance_scale,
+          scheduler: falInput.scheduler,
         };
         
+        console.log("[Index.tsx] Metadata to be saved:", JSON.stringify(completeMetadata, null, 2));
+
         try {
-          // Truncate the seed value if it's too large for the integer type
-          const truncatedSeed = image.seed ? (image.seed % 2147483647) : null;
-          
-          const { data, error } = await supabase
+          const truncatedSeed = responseSeed ? (responseSeed % 2147483647) : null;
+          const { data: dbData, error: dbError } = await supabase
             .from('generations')
-            .insert({
-              image_url: image.url,
-              prompt: image.prompt,
-              seed: truncatedSeed,
-              metadata: metadata
-            })
+            .insert({ image_url: image.url, prompt: formData.prompt, seed: truncatedSeed, metadata: completeMetadata as Json })
             .select();
             
-          if (error) {
-            console.error('Error saving image to database:', error);
-          } else if (data && data.length > 0) {
-            // Add the database id to the image object
-            const savedImage = { ...image, id: data[0].id };
-            savedImages.push(savedImage);
+          if (dbError) throw dbError;
+          if (dbData && dbData.length > 0) {
+            savedImagesToDisplay.push({ 
+              id: dbData[0].id, 
+              url: image.url,
+              prompt: formData.prompt, 
+              seed: responseSeed,
+              metadata: completeMetadata 
+            });
           }
         } catch (dbError) {
           console.error('Error saving image to database:', dbError);
-          // Still keep the image in the list even if it wasn't saved to DB
-          savedImages.push(image);
+          // For images that failed to save to DB, ensure they still have the necessary fields for GeneratedImageWithMetadata
+          savedImagesToDisplay.push({ url: image.url, prompt: formData.prompt, seed: responseSeed, metadata: completeMetadata });
         }
       }
       
-      // Replace placeholders if this is the first real generation
       if (showPlaceholders) {
-        setGeneratedImages(savedImages.length > 0 ? savedImages : newImages);
+        const imagesToSet = savedImagesToDisplay.length > 0 ? savedImagesToDisplay 
+          : newImagesFromApi.map((img: any) => ({ 
+              url: img.url, 
+              prompt: formData.prompt, 
+              seed: responseSeed, 
+              // Ensure a basic metadata object if others failed
+              metadata: { 
+                prompt: formData.prompt, 
+                seed: responseSeed,
+                width: img.width, 
+                height: img.height, 
+                content_type: img.content_type 
+              } as DisplayableMetadata 
+            }));
+        setGeneratedImages(imagesToSet);
         setShowPlaceholders(false);
       } else {
-        // Otherwise, add new images to the beginning of the array
-        setGeneratedImages(prevImages => [
-          ...(savedImages.length > 0 ? savedImages : newImages), 
-          ...prevImages
-        ]);
+        setGeneratedImages(prevImages => [...savedImagesToDisplay, ...prevImages]);
       }
-      
       toast.success("Images generated successfully!");
-      
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error generating images:", error);
-      toast.error("Failed to generate images. Please try again.");
+      toast.error(`Failed to generate images: ${error.message || "Please try again."}`);
     } finally {
       setIsGenerating(false);
     }
   };
 
-  // Check if the API key is properly set (not the default, which we consider invalid)
+  const handleApplySettingsFromGallery = (settings: DisplayableMetadata) => {
+    if (imageGenerationFormRef.current?.applySettings) {
+      imageGenerationFormRef.current.applySettings(settings);
+      toast.success("Settings applied to form!");
+    } else {
+      toast.error("Could not apply settings to the form.");
+    }
+  };
+
   const hasValidApiKey = apiKey && apiKey !== '0b6f1876-0aab-4b56-b821-b384b64768fa:121392c885a381f93de56d701e3d532f';
 
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto py-8 px-4 relative">
         <h1 className="text-3xl font-bold mb-8 text-center">AI Image Generator</h1>
-        
-        {/* Settings Modal */}
-        <SettingsModal 
-          currentFalApiKey={apiKey}
-          onSaveApiKeys={handleSaveApiKeys}
-        />
-        
+        <SettingsModal currentFalApiKey={apiKey} onSaveApiKeys={handleSaveApiKeys}/>
         <div className="space-y-8">
-          {/* Top Pane: Controls */}
           <div className="bg-white rounded-xl shadow overflow-hidden">
-            <ImageGenerationForm 
-              onGenerate={handleGenerate} 
-              isGenerating={isGenerating} 
-              hasApiKey={hasValidApiKey} 
-            />
+            <ImageGenerationForm ref={imageGenerationFormRef} onGenerate={handleGenerate} isGenerating={isGenerating} hasApiKey={hasValidApiKey}/>
           </div>
-          
-          {/* Bottom Pane: Results */}
           <div className="bg-white rounded-xl shadow p-6">
             {isGenerating && (
               <div className="flex justify-center items-center py-3 mb-4">
@@ -328,11 +263,7 @@ const Index = () => {
                 <span className="ml-2">Generating new images...</span>
               </div>
             )}
-            <ImageGallery 
-              images={generatedImages} 
-              onDelete={handleDeleteImage}
-              isDeleting={isDeleting}
-            />
+            <ImageGallery images={generatedImages} onDelete={handleDeleteImage} isDeleting={isDeleting} onApplySettings={handleApplySettingsFromGallery} />
           </div>
         </div>
       </div>
