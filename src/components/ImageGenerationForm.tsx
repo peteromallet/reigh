@@ -79,39 +79,41 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, i
           <Label htmlFor="dynamicPrompt">Dynamically generate prompt</Label>
         </div>
 
-        {dynamicPrompt ? (
+        {dynamicPrompt && (
           <Alert variant="default" className="bg-yellow-50 border-yellow-200">
             <AlertCircle className="h-4 w-4 text-yellow-600" />
             <AlertDescription className="text-yellow-800">
               Dynamic prompt generation is not yet implemented
             </AlertDescription>
           </Alert>
-        ) : (
-          <div>
-            <Label htmlFor="prompt" className="text-lg font-medium">Prompt:</Label>
-            <Textarea
-              id="prompt"
-              placeholder="Enter your image generation prompt here..."
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              className="min-h-[120px] mt-2"
-            />
-          </div>
         )}
 
+        <div>
+          <Label htmlFor="prompt" className="text-lg font-medium">Prompt:</Label>
+          <Textarea
+            id="prompt"
+            placeholder="Enter your image generation prompt here..."
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            className="min-h-[120px] mt-2"
+          />
+        </div>
+
         <div className="flex flex-wrap gap-6">
-          <div>
-            <Label htmlFor="promptCount">Prompts</Label>
-            <Input
-              id="promptCount"
-              type="number"
-              min={1}
-              max={100}
-              value={promptCount}
-              onChange={(e) => setPromptCount(parseInt(e.target.value) || 1)}
-              className="w-20 mt-1"
-            />
-          </div>
+          {dynamicPrompt && (
+            <div>
+              <Label htmlFor="promptCount">Prompts</Label>
+              <Input
+                id="promptCount"
+                type="number"
+                min={1}
+                max={100}
+                value={promptCount}
+                onChange={(e) => setPromptCount(parseInt(e.target.value) || 1)}
+                className="w-20 mt-1"
+              />
+            </div>
+          )}
 
           <div>
             <Label htmlFor="imagesPerPrompt">Images to generate</Label>
