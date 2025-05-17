@@ -250,7 +250,14 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto py-8 px-4 relative">
-        
+        <h1 className="text-3xl font-bold mb-8 text-center">AI Image Generator</h1>
+        {!hasValidApiKey && (
+          <div className="mb-6 p-4 border border-red-300 bg-red-50 rounded-md text-center">
+            <p className="text-red-700 font-semibold">
+              You need to enter your Fal API key. Click the settings icon (top right) to add it.
+            </p>
+          </div>
+        )}
         <SettingsModal currentFalApiKey={apiKey} onSaveApiKeys={handleSaveApiKeys}/>
         <div className="space-y-8">
           <div className="bg-white rounded-xl shadow overflow-hidden">
