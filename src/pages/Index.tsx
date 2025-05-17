@@ -5,6 +5,7 @@ import SettingsModal from "@/components/SettingsModal";
 import { fal } from "@fal-ai/client";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { uploadImageToStorage } from "@/utils/imageUploader";
 
 // Initialize fal client with environment configuration
 const initializeFalClient = () => {
@@ -138,9 +139,24 @@ const Index = () => {
     toast.info("Generating images...");
     
     try {
-      // Prepare the control images
-      const controlImageUrl = formData.controlImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png";
-      const depthControlImageUrl = formData.depthControlImageUrl || "https://v3.fal.media/files/lion/Xq7VLnpg89HEfHh_spBTN_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png";
+      let userImageUrl = null;
+      
+      // If user has uploaded a starting image, upload it to Supabase storage
+      if (formData.startingImage) {
+        try {
+          toast.info("Uploading your image...");
+          userImageUrl = await uploadImageToStorage(formData.startingImage);
+          toast.success("Image uploaded successfully!");
+        } catch (uploadError) {
+          console.error("Error uploading image:", uploadError);
+          toast.error("Failed to upload image. Using default image instead.");
+        }
+      }
+      
+      // Use the uploaded image URL for both control images if available
+      // Otherwise fall back to the default control images
+      const controlImageUrl = userImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png";
+      const depthControlImageUrl = userImageUrl || "https://v3.fal.media/files/lion/Xq7VLnpg89HEfHh_spBTN_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png";
       
       // Use the normalized strength values directly
       const loraStrength = formData.loraStrength;
@@ -164,8 +180,7 @@ const Index = () => {
             path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
             end_percentage: 0.5,
             conditioning_scale: softEdgeStrength,
-            // Use control_image instead of control_image_url to match expected API parameter
-            control_image: controlImageUrl
+            control_image_url: controlImageUrl
           }],
           controlnet_unions: [],
           ip_adapters: [],
@@ -181,8 +196,7 @@ const Index = () => {
           control_loras: [{
             path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
             preprocess: "depth",
-            // Use control_image instead of control_image_url
-            control_image: depthControlImageUrl,
+            control_image_url: depthControlImageUrl,
             scale: depthStrength.toString()
           }],
           image_size: "portrait_16_9",
@@ -226,7 +240,8 @@ const Index = () => {
           depthStrength: formData.depthStrength,
           softEdgeStrength: formData.softEdgeStrength,
           dynamicPrompt: formData.dynamicPrompt,
-          dynamicStartingImage: formData.dynamicStartingImage
+          dynamicStartingImage: formData.dynamicStartingImage,
+          userProvidedImageUrl: userImageUrl
         };
         
         try {
