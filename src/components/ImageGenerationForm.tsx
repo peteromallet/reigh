@@ -68,16 +68,27 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, i
     <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 bg-white rounded-lg shadow-sm">
       {/* Left Column */}
       <div className="space-y-6">
-        <div>
-          <Label htmlFor="prompt" className="text-lg font-medium">Prompt:</Label>
-          <Textarea
-            id="prompt"
-            placeholder="Enter your image generation prompt here..."
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            className="min-h-[120px] mt-2"
+        <div className="flex items-center space-x-2">
+          <Checkbox
+            id="dynamicPrompt"
+            checked={dynamicPrompt}
+            onCheckedChange={(checked) => setDynamicPrompt(checked === true)}
           />
+          <Label htmlFor="dynamicPrompt">Dynamically generate prompt</Label>
         </div>
+
+        {!dynamicPrompt && (
+          <div>
+            <Label htmlFor="prompt" className="text-lg font-medium">Prompt:</Label>
+            <Textarea
+              id="prompt"
+              placeholder="Enter your image generation prompt here..."
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              className="min-h-[120px] mt-2"
+            />
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-6">
           <div>
@@ -105,15 +116,6 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, i
               className="w-20 mt-1"
             />
           </div>
-        </div>
-
-        <div className="flex items-center space-x-2">
-          <Checkbox
-            id="dynamicPrompt"
-            checked={dynamicPrompt}
-            onCheckedChange={(checked) => setDynamicPrompt(checked === true)}
-          />
-          <Label htmlFor="dynamicPrompt">Dynamically generate prompt</Label>
         </div>
 
         <div className="space-y-4">
