@@ -1,5 +1,4 @@
-
-import React, { useState } from "react";
+import React from "react";
 import { Slider } from "@/components/ui/slider";
 
 interface SliderWithValueProps {
@@ -9,6 +8,7 @@ interface SliderWithValueProps {
   min?: number;
   max?: number;
   step?: number;
+  disabled?: boolean;
 }
 
 const SliderWithValue = ({
@@ -18,6 +18,7 @@ const SliderWithValue = ({
   min = 0,
   max = 100,
   step = 1,
+  disabled = false,
 }: SliderWithValueProps) => {
   const handleValueChange = (values: number[]) => {
     onChange(values[0]);
@@ -36,6 +37,7 @@ const SliderWithValue = ({
           step={step}
           onValueChange={handleValueChange}
           className="flex-1"
+          disabled={disabled}
         />
         <div className="border rounded w-16 h-10 flex items-center justify-center bg-white">
           {value}

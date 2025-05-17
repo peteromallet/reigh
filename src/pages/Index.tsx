@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import ImageGenerationForm from "@/components/ImageGenerationForm";
 import ImageGallery from "@/components/ImageGallery";
@@ -164,15 +163,19 @@ const Index = () => {
       const depthStrength = formData.depthStrength;
       const softEdgeStrength = formData.softEdgeStrength;
       
-      console.log("Using strengths:", {
-        loraStrength,
-        depthStrength,
-        softEdgeStrength
-      });
+      // console.log("Using strengths:", { // This logging might be less relevant now or need update
+      //   loraStrength,
+      //   depthStrength,
+      //   softEdgeStrength
+      // });
       
-      // Verify if the provided LoRA URL is valid or use default
-      const loraUrl = formData.loraUrl || DEFAULT_LORA_URL;
-      
+      // The loras array is now directly provided by ImageGenerationForm
+      const lorasForApi = formData.loras; // This should be the array like [{path: "...", scale: "..."}]
+      console.log("Using LoRAs for API:", lorasForApi);
+      // DEFAULT_LORA_URL is no longer used here directly in this way, 
+      // but could be a fallback if lorasForApi is empty and API requires at least one.
+      // For now, assuming API handles empty loras array or it's always populated if intended.
+
       const result = await fal.subscribe("fal-ai/flux-general", {
         input: {
           prompt: formData.prompt,
@@ -181,7 +184,7 @@ const Index = () => {
             path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
             end_percentage: 0.5,
             conditioning_scale: softEdgeStrength,
-            control_image_url: controlImageUrl  // Fixed property name
+            control_image_url: controlImageUrl 
           }],
           controlnet_unions: [],
           ip_adapters: [],
@@ -197,15 +200,12 @@ const Index = () => {
           control_loras: [{
             path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
             preprocess: "depth",
-            control_image_url: depthControlImageUrl,  // Fixed property name
+            control_image_url: depthControlImageUrl, 
             scale: depthStrength.toString()
           }],
           image_size: "portrait_16_9",
-          loras: [{
-            path: loraUrl,
-            scale: loraStrength.toString()
-          }]
-        },
+          loras: lorasForApi 
+        } as any,
         logs: true,
         onQueueUpdate: (update) => {
           if (update.status === "IN_PROGRESS") {
@@ -236,12 +236,13 @@ const Index = () => {
           width: image.width,
           height: image.height,
           content_type: image.content_type,
-          loraUrl: loraUrl,
-          loraStrength: formData.loraStrength,
-          depthStrength: formData.depthStrength,
-          softEdgeStrength: formData.softEdgeStrength,
-          dynamicPrompt: formData.dynamicPrompt,
-          dynamicStartingImage: formData.dynamicStartingImage,
+          // loraUrl: loraUrl, // This specific field might need to be rethought if storing multiple loras
+          // loraStrength: formData.loraStrength, // This specific field might need to be rethought
+          activeLoras: lorasForApi, // Store the array of active loras
+          depthStrength: formData.depthStrength, // Store as received (already normalized in form)
+          softEdgeStrength: formData.softEdgeStrength, // Store as received
+          // dynamicPrompt: formData.dynamicPrompt, // These were commented out
+          // dynamicStartingImage: formData.dynamicStartingImage, // These were commented out
           userProvidedImageUrl: userImageUrl
         };
         
