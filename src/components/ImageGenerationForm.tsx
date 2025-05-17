@@ -7,14 +7,19 @@ import { SliderWithValue } from "@/components/ui/slider-with-value";
 import { ImageUpload } from "@/components/ui/image-upload";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Settings } from "lucide-react";
 
 interface ImageGenerationFormProps {
   onGenerate: (formData: any) => void;
   isGenerating?: boolean;
+  hasApiKey?: boolean;
 }
 
-const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, isGenerating = false }) => {
+const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ 
+  onGenerate, 
+  isGenerating = false, 
+  hasApiKey = true 
+}) => {
   const [prompt, setPrompt] = useState("");
   const [promptCount, setPromptCount] = useState(1);
   const [imagesPerPrompt, setImagesPerPrompt] = useState(1);
@@ -193,11 +198,26 @@ const ImageGenerationForm: React.FC<ImageGenerationFormProps> = ({ onGenerate, i
 
         <button
           type="submit"
-          className="mt-6 w-full py-2 px-4 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
-          disabled={isGenerating}
+          className={`mt-6 w-full py-2 px-4 rounded-md transition-colors ${
+            hasApiKey 
+            ? "bg-primary text-primary-foreground hover:bg-primary/90" 
+            : "bg-gray-300 text-gray-600 cursor-not-allowed"
+          }`}
+          disabled={isGenerating || !hasApiKey}
         >
           {isGenerating ? "Generating..." : "Generate Images"}
         </button>
+        
+        {!hasApiKey && (
+          <Alert variant="default" className="bg-yellow-50 border-yellow-200 mt-2">
+            <AlertCircle className="h-4 w-4 text-yellow-600" />
+            <AlertDescription className="flex items-center text-yellow-800">
+              <span>Please add your Fal API key in </span>
+              <Settings className="h-4 w-4 mx-1" />
+              <span>Settings to generate images</span>
+            </AlertDescription>
+          </Alert>
+        )}
       </div>
     </form>
   );

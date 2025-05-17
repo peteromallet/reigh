@@ -181,7 +181,7 @@ const Index = () => {
             path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
             end_percentage: 0.5,
             conditioning_scale: softEdgeStrength,
-            control_image_url: controlImageUrl  // Correct property name
+            control_image: controlImageUrl  // Fix parameter name based on API requirements
           }],
           controlnet_unions: [],
           ip_adapters: [],
@@ -197,7 +197,7 @@ const Index = () => {
           control_loras: [{
             path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
             preprocess: "depth",
-            control_image_url: depthControlImageUrl,  // Correct property name
+            control_image: depthControlImageUrl,  // Fix parameter name based on API requirements
             scale: depthStrength.toString()
           }],
           image_size: "portrait_16_9",
@@ -295,6 +295,9 @@ const Index = () => {
     }
   };
 
+  // Check if the API key is properly set (not the default, which we consider invalid)
+  const hasValidApiKey = apiKey && apiKey !== '0b6f1876-0aab-4b56-b821-b384b64768fa:121392c885a381f93de56d701e3d532f';
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto py-8 px-4 relative">
@@ -309,7 +312,11 @@ const Index = () => {
         <div className="space-y-8">
           {/* Top Pane: Controls */}
           <div className="bg-white rounded-xl shadow overflow-hidden">
-            <ImageGenerationForm onGenerate={handleGenerate} isGenerating={isGenerating} />
+            <ImageGenerationForm 
+              onGenerate={handleGenerate} 
+              isGenerating={isGenerating} 
+              hasApiKey={hasValidApiKey} 
+            />
           </div>
           
           {/* Bottom Pane: Results */}
