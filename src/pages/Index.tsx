@@ -93,6 +93,8 @@ const Index = () => {
   const handleGenerate = async (formData: any) => {
     setIsGenerating(true);
     toast.info("Generating images...");
+    console.log("[Index.tsx handleGenerate] Received formData:", JSON.stringify(formData, null, 2));
+    console.log("[Index.tsx handleGenerate] formData.determinedApiImageSize:", formData.determinedApiImageSize);
     
     try {
       let userImageUrl = null;
@@ -119,7 +121,7 @@ const Index = () => {
         prompt: formData.prompt,
         num_inference_steps: 28,
         num_images: formData.imagesPerPrompt,
-        enable_safety_checker: true,
+        enable_safety_checker: false,
         guidance_scale: 3.5,
         real_cfg_scale: 3.5,
         base_shift: 0.5,
@@ -140,6 +142,9 @@ const Index = () => {
           scale: depthStrengthForApi.toString() 
         }],
       };
+
+      console.log("[Index.tsx handleGenerate] API input image_size:", falInput.image_size);
+      console.log("[Index.tsx handleGenerate] Full falInput:", JSON.stringify(falInput, null, 2));
 
       const result = await fal.subscribe("fal-ai/flux-general", {
         input: falInput as any, 

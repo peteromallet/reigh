@@ -11,11 +11,12 @@ interface TargetAspectRatio {
 }
 
 // Based on the UI and the example API call (portrait_16_9)
+// Corrected apiString values based on Fal AI documentation
 const TARGET_ASPECT_RATIOS: TargetAspectRatio[] = [
   { name: "Square", apiString: "square", ratio: 1.0 },
-  // { name: "Square HD", apiString: "square_hd", ratio: 1.0 }, // Needs clarification on how to select this if AR is 1.0
-  { name: "Portrait 3:4", apiString: "portrait_3_4", ratio: 3 / 4 },
-  { name: "Portrait 9:16", apiString: "portrait_9_16", ratio: 9 / 16 },
+  { name: "Square HD", apiString: "square_hd", ratio: 1.0 }, // Added Square HD as it's a valid API enum
+  { name: "Portrait 4:3", apiString: "portrait_4_3", ratio: 3 / 4 }, // Corrected (formerly portrait_3_4, ratio is 3/4 width/height)
+  { name: "Portrait 16:9", apiString: "portrait_16_9", ratio: 9 / 16 },// Corrected (formerly portrait_9_16, ratio is 9/16 width/height)
   { name: "Landscape 4:3", apiString: "landscape_4_3", ratio: 4 / 3 },
   { name: "Landscape 16:9", apiString: "landscape_16_9", ratio: 16 / 9 },
 ];
