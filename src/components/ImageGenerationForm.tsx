@@ -572,16 +572,15 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
                     <PlusCircle className="mr-2 h-4 w-4" /> Add Prompt
                   </Button>
                 )}
-                <Button 
-                  type="button" 
-                  variant="secondary" 
-                  size="sm" 
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => setIsPromptModalOpen(true)} 
                   disabled={!hasApiKey || isGenerating}
-                  title={prompts.length > 3 ? `Manage ${prompts.length} Prompts` : "Open Advanced Prompt Editor"}
+                  title="Open Advanced Prompt Editor"
                 >
                   <Edit3 className="mr-2 h-4 w-4" /> 
-                  {prompts.length > 3 ? `Manage All (${prompts.length})` : "Edit All"}
+                  {prompts.length > 3 ? `Manage Prompts (${prompts.length})` : "Manage Prompts"}
                 </Button>
               </div>
             </div>
