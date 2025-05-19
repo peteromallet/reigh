@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Trash2, Info, Settings, CheckCircle, AlertTriangle } from "lucide-react";
+import { Trash2, Info, Settings, CheckCircle, AlertTriangle, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { 
   Tooltip, 
@@ -8,6 +8,7 @@ import {
   TooltipTrigger 
 } from "@/components/ui/tooltip";
 import FullscreenImageModal from "@/components/ui/FullscreenImageModal";
+import { useToast } from "@/hooks/use-toast";
 
 // Define the structure for individual LoRA details within metadata
 export interface MetadataLora {
@@ -56,7 +57,7 @@ interface ImageGalleryProps {
 
 // Helper to format metadata for display
 const formatMetadataForDisplay = (metadata: DisplayableMetadata): string => {
-  console.log("[ImageGallery.tsx] Received metadata for display:", JSON.stringify(metadata, null, 2));
+  
   let displayText = "";
   if (metadata.prompt) displayText += `Prompt: ${metadata.prompt}\n`;
   if (metadata.seed) displayText += `Seed: ${metadata.seed}\n`;
@@ -87,16 +88,67 @@ const formatMetadataForDisplay = (metadata: DisplayableMetadata): string => {
 
 const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeleting, onApplySettings }) => {
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
-  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const [lightboxImageAlt, setLightboxImageAlt] = useState<string>("Fullscreen view"); // Store alt text for lightbox
+  const [lightboxImageId, setLightboxImageId] = useState<string | undefined>(undefined); // Store ID for download name
+  const [downloadingImageId, setDownloadingImageId] = useState<string | null>(null); // For gallery item download
+  const { toast } = useToast();
 
-  const handleOpenLightbox = (imageUrl: string) => {
-    setLightboxImageUrl(imageUrl);
-    setIsLightboxOpen(true);
+  const handleOpenLightbox = (image: GeneratedImageWithMetadata) => {
+    setLightboxImageUrl(image.url);
+    setLightboxImageAlt(image.prompt || `Generated image with ID ${image.id}`);
+    setLightboxImageId(image.id);
   };
 
   const handleCloseLightbox = () => {
-    setIsLightboxOpen(false);
     setLightboxImageUrl(null);
+    setLightboxImageAlt("Fullscreen view");
+    setLightboxImageId(undefined);
+  };
+
+  const handleDownloadImage = async (imageUrl: string, filename: string, imageId?: string) => {
+    const currentDownloadId = imageId || filename;
+    setDownloadingImageId(currentDownloadId);
+
+    try {
+      // Use XMLHttpRequest instead of fetch for better compatibility with Supabase storage URLs
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', imageUrl, true);
+      xhr.responseType = 'blob';
+
+      xhr.onload = function() {
+        if (this.status === 200) {
+          const blob = new Blob([this.response], { type: 'image/png' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+          toast({ title: "Download Started", description: filename });
+        } else {
+          throw new Error(`Failed to fetch image: ${this.status} ${this.statusText}`);
+        }
+      };
+
+      xhr.onerror = function() {
+        throw new Error('Network request failed');
+      };
+
+      xhr.send();
+    } catch (error) {
+      console.error("Error downloading image:", error);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      toast({ 
+        title: "Download Failed", 
+        description: `Could not download ${filename}. ${errorMessage}`,
+        variant: "destructive" 
+      });
+    } finally {
+      setDownloadingImageId(null);
+    }
   };
 
   return (
@@ -126,80 +178,95 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeletin
                       src={image.url}
                       alt={image.prompt || `Generated image ${index + 1}`}
                       className="absolute inset-0 w-full h-full object-cover group-hover:opacity-80 transition-opacity duration-300"
-                      onDoubleClick={() => handleOpenLightbox(image.url)}
+                      onDoubleClick={() => handleOpenLightbox(image)}
                       style={{ cursor: 'pointer' }}
                     />
                   </div>
                 </div>
                 
                 {!isPlaceholder && (
-                  <div className="absolute top-2 right-2 flex flex-col gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {onDelete && (
-                       <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button 
-                            variant="destructive" 
-                            size="icon" 
-                            className="h-7 w-7 p-0 rounded-full"
-                            onClick={() => onDelete(image.id!)}
-                            disabled={isCurrentlyDeleting}
+                  <>
+                    <div className="absolute top-2 right-2 flex flex-col gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {onDelete && (
+                         <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button 
+                              variant="destructive" 
+                              size="icon" 
+                              className="h-7 w-7 p-0 rounded-full"
+                              onClick={() => onDelete(image.id!)}
+                              disabled={isCurrentlyDeleting}
+                            >
+                              {isCurrentlyDeleting ? (
+                                <div className="h-3 w-3 animate-spin rounded-full border-b-2 border-white"></div>
+                              ) : (
+                                <Trash2 className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom"><p>Delete Image</p></TooltipContent>
+                        </Tooltip>
+                      )}
+                      {image.metadata && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="secondary" size="icon" className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white">
+                              <Info className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent 
+                            side="bottom" 
+                            className="max-w-md text-xs p-3 leading-relaxed shadow-lg bg-background border max-h-80 overflow-y-auto"
                           >
-                            {isCurrentlyDeleting ? (
-                              <div className="h-3 w-3 animate-spin rounded-full border-b-2 border-white"></div>
+                            {image.metadata.userProvidedImageUrl && (
+                              <img 
+                                src={image.metadata.userProvidedImageUrl} 
+                                alt="User provided image preview"
+                                className="w-full h-auto max-h-24 object-contain rounded-sm mb-2 border"
+                              />
+                            )}
+                            <pre className="font-sans whitespace-pre-wrap">{formatMetadataForDisplay(image.metadata)}</pre>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {image.metadata && onApplySettings && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button 
+                              variant="outline"
+                              size="icon" 
+                              className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white"
+                              onClick={() => image.metadata && onApplySettings(image.metadata)}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-copy-plus"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/><path d="M15 12h6"/><path d="M18 9v6"/></svg>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom"><p>Use these settings</p></TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+                    <div className="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white"
+                            onClick={() => handleDownloadImage(image.url, `artful_pane_craft_image_${image.id || index}.png`, image.id || imageKey)}
+                            disabled={downloadingImageId === (image.id || imageKey)}
+                          >
+                            {downloadingImageId === (image.id || imageKey) ? (
+                              <div className="h-3 w-3 animate-spin rounded-full border-b-2 border-current"></div>
                             ) : (
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Download className="h-3.5 w-3.5" />
                             )}
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent side="bottom"><p>Delete Image</p></TooltipContent>
+                        <TooltipContent side="top"><p>Download Image</p></TooltipContent>
                       </Tooltip>
-                    )}
-                    {image.metadata && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button variant="secondary" size="icon" className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white">
-                            <Info className="h-3.5 w-3.5" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent 
-                          side="bottom" 
-                          className="max-w-md text-xs p-3 leading-relaxed shadow-lg bg-background border max-h-80 overflow-y-auto"
-                        >
-                          {image.metadata.userProvidedImageUrl && (
-                            <img 
-                              src={image.metadata.userProvidedImageUrl} 
-                              alt="User provided image preview"
-                              className="w-full h-auto max-h-24 object-contain rounded-sm mb-2 border"
-                            />
-                          )}
-                          <pre className="font-sans whitespace-pre-wrap">{formatMetadataForDisplay(image.metadata)}</pre>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                    {image.metadata && onApplySettings && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button 
-                            variant="outline"
-                            size="icon" 
-                            className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white"
-                            onClick={() => image.metadata && onApplySettings(image.metadata)}
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-copy-plus"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/><path d="M15 12h6"/><path d="M18 9v6"/></svg>
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom"><p>Use these settings</p></TooltipContent>
-                      </Tooltip>
-                    )}
-                  </div>
+                    </div>
+                  </>
                 )}
-                
-                {/* Optionally, display primary prompt/seed directly if needed, though now in tooltip */}
-                {/* {image.prompt && (
-                  <div className="p-2 text-xs text-gray-700 border-t truncate">
-                    {image.prompt}
-                  </div>
-                )} */}
               </div>
             );
           })}
@@ -208,6 +275,8 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeletin
       
       <FullscreenImageModal 
         imageUrl={lightboxImageUrl} 
+        imageAlt={lightboxImageAlt}
+        imageId={lightboxImageId}
         onClose={handleCloseLightbox} 
       />
     </TooltipProvider>
