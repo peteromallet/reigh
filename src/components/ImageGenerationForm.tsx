@@ -27,12 +27,15 @@ interface ImageGenerationFormProps {
   onGenerate: (formData: any) => void;
   isGenerating?: boolean;
   hasApiKey?: boolean;
+  apiKey?: string;
+  openaiApiKey?: string;
 }
 
 export interface PromptEntry {
   id: string;
   fullPrompt: string;
   shortPrompt?: string;
+  selected?: boolean;
 }
 
 interface LoraDataEntry {
@@ -73,91 +76,161 @@ const defaultLorasConfig = [
 
 export interface PromptInputRowProps {
   promptEntry: PromptEntry;
-  onUpdate: (id: string, field: 'fullPrompt', value: string) => void;
+  onUpdate: (id: string, field: 'fullPrompt' | 'shortPrompt', value: string) => void;
   onRemove: (id: string) => void;
   canRemove: boolean;
   isGenerating?: boolean;
   hasApiKey?: boolean;
   index: number;
-  showShortPromptInput?: boolean;
+  onEditWithAI?: () => void;
+  aiEditButtonIcon?: React.ReactNode;
+  onSetActiveForFullView: (id: string | null) => void;
+  isActiveForFullView: boolean;
 }
 
 export const PromptInputRow: React.FC<PromptInputRowProps> = ({
   promptEntry, onUpdate, onRemove, canRemove, isGenerating, hasApiKey, index,
-  showShortPromptInput = false
+  onEditWithAI,
+  aiEditButtonIcon,
+  onSetActiveForFullView,
+  isActiveForFullView,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [isFocused, setIsFocused] = useState(false);
+  const [isEditingFullPrompt, setIsEditingFullPrompt] = useState(false);
+
+  const effectiveShortPrompt = promptEntry.shortPrompt?.trim();
+  
+  let displayText = effectiveShortPrompt || promptEntry.fullPrompt;
+  let currentPlaceholder = `Enter your detailed prompt #${index + 1}...`;
+  let isShowingShort = !!effectiveShortPrompt;
+
+  if (isActiveForFullView || isEditingFullPrompt) {
+    displayText = promptEntry.fullPrompt;
+    isShowingShort = false;
+    if (isEditingFullPrompt) {
+        currentPlaceholder = `Editing detailed prompt #${index + 1}...`;
+    } else if (isActiveForFullView && effectiveShortPrompt) {
+        currentPlaceholder = `Full prompt shown. Click to edit. (Summary: ${effectiveShortPrompt})`;
+    } else {
+        currentPlaceholder = `Full prompt shown. Click to edit.`;
+    }
+  } else if (effectiveShortPrompt) {
+    displayText = effectiveShortPrompt;
+    currentPlaceholder = `Click or hover to see/edit full prompt... (Summary: ${effectiveShortPrompt})`;
+    isShowingShort = true;
+  }
 
   const autoResizeTextarea = () => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'inherit';
       const scrollHeight = textareaRef.current.scrollHeight;
-      const baseHeight = (isFocused || promptEntry.fullPrompt) ? Math.max(60, scrollHeight) : 60;
+      let baseHeight = 60;
+      if (isShowingShort && !isActiveForFullView && !isEditingFullPrompt) {
+         baseHeight = Math.max(40, Math.min(scrollHeight, 80)); 
+      } else { 
+         baseHeight = Math.max(60, scrollHeight);
+      }
       textareaRef.current.style.height = `${baseHeight}px`;
     }
   };
 
   useEffect(() => {
     autoResizeTextarea();
-  }, [promptEntry.fullPrompt, isFocused]);
+  }, [displayText, isActiveForFullView, isEditingFullPrompt]);
 
-  useEffect(() => {
-    autoResizeTextarea();
-  }, []);
+  useEffect(() => { autoResizeTextarea(); }, []);
 
   const handleFullPromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     onUpdate(promptEntry.id, 'fullPrompt', e.target.value);
   };
-  
+
+  const handleFocus = () => {
+    setIsEditingFullPrompt(true);
+    onSetActiveForFullView(promptEntry.id);
+  };
+
+  const handleBlur = () => {
+    setIsEditingFullPrompt(false);
+  };
+
+  const handleMouseEnter = () => {
+    if (!isEditingFullPrompt && effectiveShortPrompt && !isActiveForFullView) {
+      onSetActiveForFullView(promptEntry.id);
+    }
+  };
+
   return (
-    <div className="p-3 border rounded-md space-y-2 bg-slate-50/50">
+    <div 
+      className="p-3 border rounded-md space-y-2 bg-slate-50/50 dark:bg-slate-800/30"
+      onMouseEnter={handleMouseEnter}
+    >
       <div className="flex justify-between items-center">
         <Label htmlFor={`fullPrompt-${promptEntry.id}`} className="text-sm font-medium">
-          Prompt #{index + 1}{promptEntry.shortPrompt && <span className="text-xs text-muted-foreground ml-2">({promptEntry.shortPrompt})</span>}
+          Prompt #{index + 1}
+          {isShowingShort && <span className="text-xs text-muted-foreground ml-2">({effectiveShortPrompt})</span>} 
+          {!isShowingShort && effectiveShortPrompt && !isEditingFullPrompt && <span className="text-xs text-muted-foreground ml-2">(Full view)</span>}
+          {isEditingFullPrompt && effectiveShortPrompt && <span className="text-xs text-muted-foreground ml-2">(Editing full)</span>}
+          {isEditingFullPrompt && !effectiveShortPrompt && <span className="text-xs text-muted-foreground ml-2">(Editing)</span>}
         </Label>
-        {canRemove && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => onRemove(promptEntry.id)}
-            className="text-destructive hover:bg-destructive/10 h-7 w-7"
-            disabled={!hasApiKey || isGenerating}
-            aria-label="Remove prompt"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        )}
-      </div>
-      {showShortPromptInput && (
-        <div>
-          <Label htmlFor={`shortPrompt-${promptEntry.id}`} className="text-xs text-muted-foreground">Short Prompt (Debug)</Label>
-          <Input
-            id={`shortPrompt-${promptEntry.id}`}
-            type="text"
-            value={promptEntry.shortPrompt || ""}
-            onChange={(e) => onUpdate(promptEntry.id, 'shortPrompt' as any, e.target.value)}
-            placeholder="Brief version for display (optional)"
-            className="mt-1 text-sm"
-            disabled={!hasApiKey || isGenerating}
-          />
+        <div className="flex items-center space-x-1">
+          {onEditWithAI && aiEditButtonIcon && hasApiKey && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={onEditWithAI}
+                    className="text-primary/80 hover:text-primary hover:bg-primary/10 h-7 w-7"
+                    disabled={isGenerating}
+                    aria-label="Edit with AI"
+                  >
+                    {aiEditButtonIcon}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  <p>Edit with AI</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {canRemove && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => onRemove(promptEntry.id)}
+                    className="text-destructive hover:bg-destructive/10 h-7 w-7"
+                    disabled={!hasApiKey || isGenerating}
+                    aria-label="Remove prompt"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  <p>Remove Prompt</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
-      )}
+      </div>
+      
       <div>
         <Textarea
           ref={textareaRef}
           id={`fullPrompt-${promptEntry.id}`}
-          value={promptEntry.fullPrompt}
+          value={displayText}
           onChange={handleFullPromptChange}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => {
-            setIsFocused(false);
-            autoResizeTextarea();
-          }}
-          placeholder={promptEntry.shortPrompt ? `Editing: ${promptEntry.shortPrompt}` : `Enter your detailed prompt #${index + 1}...`}
-          className="mt-1 min-h-[60px] resize-none overflow-y-hidden"
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          placeholder={currentPlaceholder}
+          className={`mt-1 min-h-[60px] resize-none overflow-y-hidden ${isShowingShort ? 'cursor-pointer' : ''}`}
           disabled={!hasApiKey || isGenerating}
-          rows={1}
+          readOnly={!isEditingFullPrompt && isActiveForFullView && !!effectiveShortPrompt}
+          rows={1} 
         />
       </div>
     </div>
@@ -165,7 +238,7 @@ export const PromptInputRow: React.FC<PromptInputRowProps> = ({
 };
 
 const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerationFormProps>((
-  { onGenerate, isGenerating = false, hasApiKey = true }, 
+  { onGenerate, isGenerating = false, hasApiKey = true, apiKey, openaiApiKey },
   ref
 ) => {
   const [prompts, setPrompts] = useState<PromptEntry[]>([]);
@@ -183,6 +256,7 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
   const hasLoadedFromStorage = useRef(false);
   const defaultsApplied = useRef(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [directFormActivePromptId, setDirectFormActivePromptId] = useState<string | null>(null);
 
   const generatePromptId = () => `prompt-${promptIdCounter.current++}`;
   
@@ -320,6 +394,7 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
   useEffect(() => {
     if (hasLoadedFromStorage.current) { 
       const currentSettings: PersistedFormSettings = { prompts, imagesPerPrompt, selectedLoras, depthStrength, softEdgeStrength };
+      console.log("[ImageGenerationForm] Saving to localStorage. Prompts count:", prompts.length, "Data:", currentSettings);
       localStorage.setItem(FORM_SETTINGS_KEY, JSON.stringify(currentSettings));
     }
   }, [prompts, imagesPerPrompt, selectedLoras, depthStrength, softEdgeStrength]);
@@ -406,11 +481,11 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
     setPrompts(prev => [...prev, newPrompt]);
   };
 
-  const handleUpdatePrompt = (id: string, field: 'fullPrompt', value: string) => {
+  const handleUpdatePrompt = (id: string, field: 'fullPrompt' | 'shortPrompt', value: string) => {
     setPrompts(prev => prev.map(p => {
       if (p.id === id) {
         const updatedPrompt = { ...p, [field]: value };
-        if (field === 'fullPrompt') {
+        if (field === 'fullPrompt' && (updatedPrompt.shortPrompt === "" || updatedPrompt.shortPrompt?.startsWith(p.fullPrompt.substring(0,20)))) {
           updatedPrompt.shortPrompt = value.substring(0, 30) + (value.length > 30 ? "..." : "");
         }
         return updatedPrompt;
@@ -428,6 +503,7 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
   };
   
   const handleSavePromptsFromModal = (updatedPrompts: PromptEntry[]) => {
+    console.log("[ImageGenerationForm] Received prompts from modal 'Save & Close':", updatedPrompts);
     setPrompts(updatedPrompts.map(p => ({
         ...p,
         id: p.id || generatePromptId(),
@@ -436,8 +512,19 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
     setIsPromptModalOpen(false);
   };
 
+  const handleAutoSavePromptsFromModal = (updatedPrompts: PromptEntry[]) => {
+    console.log("[ImageGenerationForm] Auto-saving prompts received from modal:", updatedPrompts);
+    setPrompts(updatedPrompts.map(p => ({
+        ...p,
+        id: p.id || generatePromptId(),
+        shortPrompt: p.shortPrompt || (p.fullPrompt ? (p.fullPrompt.substring(0,30) + (p.fullPrompt.length > 30 ? "..." : "")) : undefined)
+    })));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    console.log("[ImageGenerationForm] handleSubmit triggered. Event type:", e.type);
+
     const lorasForApi = selectedLoras.map(lora => ({ path: lora.path, scale: (lora.strength / 100).toString() }));    
     const normalizedDepthStrength = depthStrength / 100;
     const normalizedSoftEdgeStrength = softEdgeStrength / 100;
@@ -445,11 +532,12 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
     
     const activePrompts = prompts.filter(p => p.fullPrompt.trim() !== "");
     if (activePrompts.length === 0) {
+        console.warn("[ImageGenerationForm] handleSubmit: No active prompts. Generation aborted.");
         toast.error("Please enter at least one valid prompt.");
         return;
     }
 
-    onGenerate({
+    const generationData = {
       prompts: activePrompts.map(p => ({
         id: p.id, 
         fullPrompt: p.fullPrompt, 
@@ -463,172 +551,192 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
       startingImage,
       appliedStartingImageUrl,
       determinedApiImageSize
-    });
+    };
+
+    console.log("[ImageGenerationForm] handleSubmit: Calling onGenerate with data:", JSON.stringify(generationData, null, 2));
+    onGenerate(generationData);
   };
   
-  const isAnyPromptEmpty = prompts.some(p => p.fullPrompt.trim() === "");
+  const actionablePromptsCount = prompts.filter(p => p.fullPrompt.trim() !== "").length;
 
   return (
-    <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 bg-white rounded-lg shadow-sm">
-      <div className="space-y-6">
-        <div className="space-y-3">
-          <div className="flex justify-between items-center mb-2">
-            <Label className="text-lg font-semibold">Prompts</Label>
-            {prompts.length <= 3 ? (
-              <Button type="button" variant="outline" size="sm" onClick={() => handleAddPrompt('form')} disabled={!hasApiKey || isGenerating}>
-                <PlusCircle className="mr-2 h-4 w-4" /> Add Prompt
-              </Button>
-            ) : (
-                <Button type="button" variant="secondary" size="sm" onClick={() => setIsPromptModalOpen(true)} disabled={!hasApiKey || isGenerating}>
-                    <Edit3 className="mr-2 h-4 w-4" /> Manage {prompts.length} Prompts
+    <>
+      <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 bg-white rounded-lg shadow-sm">
+        <div className="space-y-6">
+          <div className="space-y-3">
+            <div className="flex justify-between items-center mb-2">
+              <Label className="text-lg font-semibold">Prompts</Label>
+              <div className="flex items-center space-x-2">
+                {prompts.length <= 3 && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => handleAddPrompt('form')} disabled={!hasApiKey || isGenerating}>
+                    <PlusCircle className="mr-2 h-4 w-4" /> Add Prompt
+                  </Button>
+                )}
+                <Button 
+                  type="button" 
+                  variant="secondary" 
+                  size="sm" 
+                  onClick={() => setIsPromptModalOpen(true)} 
+                  disabled={!hasApiKey || isGenerating}
+                  title={prompts.length > 3 ? `Manage ${prompts.length} Prompts` : "Open Advanced Prompt Editor"}
+                >
+                  <Edit3 className="mr-2 h-4 w-4" /> 
+                  {prompts.length > 3 ? `Manage All (${prompts.length})` : "Edit All"}
                 </Button>
-            )}
-          </div>
-
-          {prompts.length <= 3 ? (
-            prompts.map((promptEntry, index) => (
-              <PromptInputRow
-                key={promptEntry.id}
-                promptEntry={promptEntry}
-                onUpdate={handleUpdatePrompt}
-                onRemove={handleRemovePrompt}
-                canRemove={prompts.length > 1}
-                isGenerating={isGenerating}
-                hasApiKey={hasApiKey}
-                index={index}
-                showShortPromptInput={false}
-              />
-            ))
-          ) : (
-            <div className="p-3 border rounded-md text-center bg-slate-50/50 hover:border-primary/50 cursor-pointer" onClick={() => setIsPromptModalOpen(true)}>
-                <p className="text-sm text-muted-foreground"><span className="font-semibold text-primary">{prompts.length} prompts</span> currently active.</p>
-                <p className="text-xs text-primary">(Click to Edit)</p>
+              </div>
             </div>
-          )}
-        </div>
 
-        <div className="grid grid-cols-1 gap-4 pt-4 border-t">
-          <div className="mt-1">
-            <SliderWithValue
-              label="Images per Prompt"
-              value={imagesPerPrompt}
-              onChange={setImagesPerPrompt}
-              min={1}
-              max={16}
-              step={1}
-              disabled={!hasApiKey || isGenerating}
-            />
-          </div>
-        </div>
-        <div>
-          <Label htmlFor="startingImageDropzone">Starting Image (Optional)</Label>
-          <div 
-            id="startingImageDropzone"
-            className={`mt-1 p-4 border-2 border-dashed rounded-md flex flex-col items-center justify-center text-center cursor-pointer 
-                        ${isDraggingOver ? 'border-primary bg-primary/10' : 'border-gray-300 hover:border-gray-400'}
-                        ${startingImagePreview ? 'h-auto' : 'h-32'}`}
-            onDragEnter={handleDragOver} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
-            onClick={() => document.getElementById('startingImageInput')?.click()}
-          >
-            <input id="startingImageInput" type="file" accept="image/*" onChange={handleStartingImageChangeViaInput} className="hidden" disabled={!hasApiKey || isGenerating} />
-            {startingImagePreview ? (
-              <div className="relative">
-                <img src={startingImagePreview} alt="Starting image preview" className="max-h-40 max-w-full rounded-md object-contain" />
-                <Button variant="destructive" size="icon" className="absolute top-1 right-1 h-6 w-6 p-0 rounded-full opacity-70 hover:opacity-100" onClick={(e) => { e.stopPropagation(); handleRemoveStartingImage(); }} disabled={!hasApiKey || isGenerating}>
-                  <X className="h-3.5 w-3.5" />
-                </Button>
-              </div>
+            {prompts.length <= 3 ? (
+              prompts.map((promptEntry, index) => (
+                <PromptInputRow
+                  key={promptEntry.id}
+                  promptEntry={promptEntry}
+                  onUpdate={handleUpdatePrompt}
+                  onRemove={handleRemovePrompt}
+                  canRemove={prompts.length > 1}
+                  isGenerating={isGenerating}
+                  hasApiKey={hasApiKey}
+                  index={index}
+                  onEditWithAI={() => { /* Placeholder for direct form AI edit */ }}
+                  aiEditButtonIcon={null} 
+                  onSetActiveForFullView={setDirectFormActivePromptId}
+                  isActiveForFullView={directFormActivePromptId === promptEntry.id}
+                />
+              ))
             ) : (
-              <div className="text-muted-foreground">
-                <UploadCloud className="mx-auto h-10 w-10 mb-2" />
-                <p className="text-sm">Drag & drop an image here, or click to select</p>
-                {isDraggingOver && <p className="text-sm text-primary font-semibold">Release to drop image</p>}
+              <div className="p-3 border rounded-md text-center bg-slate-50/50 hover:border-primary/50 cursor-pointer" onClick={() => setIsPromptModalOpen(true)}>
+                  <p className="text-sm text-muted-foreground"><span className="font-semibold text-primary">{prompts.length} prompts</span> currently active.</p>
+                  <p className="text-xs text-primary">(Click to Edit)</p>
               </div>
             )}
           </div>
-        </div>
-      </div>
 
-      <div className="space-y-6">
-        <div>
-          <Label>LoRA Models</Label>
-          <Button type="button" variant="outline" className="w-full mt-1" onClick={() => setIsLoraModalOpen(true)} disabled={isGenerating}>
-            Add or Manage LoRA Models
-          </Button>
-          {availableLoras.length === 0 && !isLoraModalOpen && <p className="text-xs text-muted-foreground mt-1">Loading LoRA models for selection...</p>}
-          {selectedLoras.length > 0 && (
-            <TooltipProvider delayDuration={300}>
-              <div className="mt-4 space-y-4 pt-2 border-t">
-                <h3 className="text-md font-semibold">Active LoRAs:</h3>
-                {selectedLoras.map((lora) => (
-                  <div key={lora.id} className="p-3 border rounded-md shadow-sm bg-slate-50">
-                    <div className="flex items-start gap-3">
-                      {lora.previewImageUrl && (
-                        <img 
-                          src={lora.previewImageUrl} 
-                          alt={`Preview for ${lora.name}`} 
-                          className="h-16 w-16 object-cover rounded-md border flex-shrink-0"
-                        />
-                      )}
-                      <div className="flex-grow min-w-0">
-                        <div className="flex justify-between items-start mb-1">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Label htmlFor={`lora-strength-${lora.id}`} className="text-sm font-medium truncate pr-2 cursor-help">
-                                {lora.name}
-                              </Label>
-                            </TooltipTrigger>
-                            <TooltipContent side="top">
-                              <p>{lora.name}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                          <Button variant="ghost" size="icon" onClick={() => handleRemoveLora(lora.id)} className="text-destructive hover:bg-destructive/10 h-7 w-7 flex-shrink-0">
-                            <X className="h-4 w-4" />
-                          </Button>
+          <div className="grid grid-cols-1 gap-4 pt-4 border-t">
+            <div className="mt-1">
+              <SliderWithValue
+                label="Images per Prompt"
+                value={imagesPerPrompt}
+                onChange={setImagesPerPrompt}
+                min={1}
+                max={16}
+                step={1}
+                disabled={!hasApiKey || isGenerating}
+              />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="startingImageDropzone">Starting Image (Optional)</Label>
+            <div 
+              id="startingImageDropzone"
+              className={`mt-1 p-4 border-2 border-dashed rounded-md flex flex-col items-center justify-center text-center cursor-pointer 
+                          ${isDraggingOver ? 'border-primary bg-primary/10' : 'border-gray-300 hover:border-gray-400'}
+                          ${startingImagePreview ? 'h-auto' : 'h-32'}`}
+              onDragEnter={handleDragOver} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
+              onClick={() => document.getElementById('startingImageInput')?.click()}
+            >
+              <input id="startingImageInput" type="file" accept="image/*" onChange={handleStartingImageChangeViaInput} className="hidden" disabled={!hasApiKey || isGenerating} />
+              {startingImagePreview ? (
+                <div className="relative">
+                  <img src={startingImagePreview} alt="Starting image preview" className="max-h-40 max-w-full rounded-md object-contain" />
+                  <Button variant="destructive" size="icon" className="absolute top-1 right-1 h-6 w-6 p-0 rounded-full opacity-70 hover:opacity-100" onClick={(e) => { e.stopPropagation(); handleRemoveStartingImage(); }} disabled={!hasApiKey || isGenerating}>
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="text-muted-foreground">
+                  <UploadCloud className="mx-auto h-10 w-10 mb-2" />
+                  <p className="text-sm">Drag & drop an image here, or click to select</p>
+                  {isDraggingOver && <p className="text-sm text-primary font-semibold">Release to drop image</p>}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div>
+            <Label>LoRA Models</Label>
+            <Button type="button" variant="outline" className="w-full mt-1" onClick={() => setIsLoraModalOpen(true)} disabled={isGenerating}>
+              Add or Manage LoRA Models
+            </Button>
+            {availableLoras.length === 0 && !isLoraModalOpen && <p className="text-xs text-muted-foreground mt-1">Loading LoRA models for selection...</p>}
+            {selectedLoras.length > 0 && (
+              <TooltipProvider delayDuration={300}>
+                <div className="mt-4 space-y-4 pt-2 border-t">
+                  <h3 className="text-md font-semibold">Active LoRAs:</h3>
+                  {selectedLoras.map((lora) => (
+                    <div key={lora.id} className="p-3 border rounded-md shadow-sm bg-slate-50">
+                      <div className="flex items-start gap-3">
+                        {lora.previewImageUrl && (
+                          <img 
+                            src={lora.previewImageUrl} 
+                            alt={`Preview for ${lora.name}`} 
+                            className="h-16 w-16 object-cover rounded-md border flex-shrink-0"
+                          />
+                        )}
+                        <div className="flex-grow min-w-0">
+                          <div className="flex justify-between items-start mb-1">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Label htmlFor={`lora-strength-${lora.id}`} className="text-sm font-medium truncate pr-2 cursor-help">
+                                  {lora.name}
+                                </Label>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                <p>{lora.name}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                            <Button variant="ghost" size="icon" onClick={() => handleRemoveLora(lora.id)} className="text-destructive hover:bg-destructive/10 h-7 w-7 flex-shrink-0">
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <SliderWithValue 
+                            label={`Strength`}
+                            value={lora.strength}
+                            onChange={(newStrength) => handleLoraStrengthChange(lora.id, newStrength)}
+                            min={0} max={100} step={1}
+                            disabled={!hasApiKey || isGenerating}
+                          />
                         </div>
-                        <SliderWithValue 
-                          label={`Strength`}
-                          value={lora.strength}
-                          onChange={(newStrength) => handleLoraStrengthChange(lora.id, newStrength)}
-                          min={0} max={100} step={1}
-                          disabled={!hasApiKey || isGenerating}
-                        />
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </TooltipProvider>
-          )}
+                  ))}
+                </div>
+              </TooltipProvider>
+            )}
+          </div>
+          <div className="space-y-6 pt-2 border-t mt-4">
+             <h3 className="text-md font-semibold">ControlNet Strengths:</h3>
+            <SliderWithValue label="Depth Strength" value={depthStrength} onChange={setDepthStrength} disabled={!hasApiKey || isGenerating}/>
+            <SliderWithValue label="Soft Edge Strength" value={softEdgeStrength} onChange={setSoftEdgeStrength} disabled={!hasApiKey || isGenerating}/>
+          </div>
         </div>
-        <div className="space-y-6 pt-2 border-t mt-4">
-           <h3 className="text-md font-semibold">ControlNet Strengths:</h3>
-          <SliderWithValue label="Depth Strength" value={depthStrength} onChange={setDepthStrength} disabled={!hasApiKey || isGenerating}/>
-          <SliderWithValue label="Soft Edge Strength" value={softEdgeStrength} onChange={setSoftEdgeStrength} disabled={!hasApiKey || isGenerating}/>
+
+        <div className="md:col-span-2 flex justify-center mt-4">
+          <Button type="submit" className="w-full md:w-1/2" disabled={isGenerating || !hasApiKey || actionablePromptsCount === 0}>
+            {isGenerating ? "Generating..." : "Generate Images"}
+          </Button>
         </div>
-      </div>
+      </form>
 
-      <div className="md:col-span-2 flex justify-center mt-4">
-        <Button type="submit" className="w-full md:w-1/2" disabled={isGenerating || !hasApiKey || isAnyPromptEmpty}>
-          {isGenerating ? "Generating..." : "Generate Images"}
-        </Button>
-      </div>
-
-      <LoraSelectorModal isOpen={isLoraModalOpen} onClose={() => setIsLoraModalOpen(false)} loras={availableLoras} onAddLora={handleAddLora} selectedLoraIds={selectedLoras.map(sl => sl.id)}/>
-      
+      <LoraSelectorModal 
+        isOpen={isLoraModalOpen} 
+        onClose={() => setIsLoraModalOpen(false)} 
+        loras={availableLoras} 
+        onAddLora={handleAddLora} 
+        selectedLoraIds={selectedLoras.map(sl => sl.id)}
+      />
+        
       <PromptEditorModal
         isOpen={isPromptModalOpen}
         onClose={() => setIsPromptModalOpen(false)}
         prompts={prompts}
         onSave={handleSavePromptsFromModal}
-        onUpdatePrompt={handleUpdatePrompt}
-        onAddPrompt={handleAddPrompt}
-        onRemovePrompt={handleRemovePrompt}
+        onAutoSavePrompts={handleAutoSavePromptsFromModal}
         generatePromptId={generatePromptId}
-        isGenerating={isGenerating}
-        hasApiKey={hasApiKey}
+        apiKey={openaiApiKey}
       />
-    </form>
+    </>
   );
 });
 
