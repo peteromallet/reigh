@@ -110,6 +110,90 @@ export type Database = {
           },
         ]
       }
+      shot_images: {
+        Row: {
+          generation_id: string
+          position: number | null
+          shot_id: string
+        }
+        Insert: {
+          generation_id: string
+          position?: number | null
+          shot_id: string
+        }
+        Update: {
+          generation_id?: string
+          position?: number | null
+          shot_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shot_images_generation_id_fkey"
+            columns: ["generation_id"]
+            isOneToOne: false
+            referencedRelation: "generations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shot_images_shot_id_fkey"
+            columns: ["shot_id"]
+            isOneToOne: false
+            referencedRelation: "shots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shots: {
+        Row: {
+          created_at: string | null
+          id: string
+          name: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          name?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          name?: string | null
+        }
+        Relationships: []
+      }
+      tasks: {
+        Row: {
+          created_at: string | null
+          id: number
+          output_location: string | null
+          params: Json
+          status: string
+          task_id: string
+          updated_at: string | null
+          worker_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: number
+          output_location?: string | null
+          params: Json
+          status?: string
+          task_id: string
+          updated_at?: string | null
+          worker_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: number
+          output_location?: string | null
+          params?: Json
+          status?: string
+          task_id?: string
+          updated_at?: string | null
+          worker_id?: string | null
+        }
+        Relationships: []
+      }
       users: {
         Row: {
           avatar_url: string | null
@@ -141,6 +225,26 @@ export type Database = {
     Functions: {
       create_chat_bypass_rls: {
         Args: { p_title: string; p_user_id: string }
+        Returns: undefined
+      }
+      func_claim_task: {
+        Args: { p_table_name: string; p_worker_id: string }
+        Returns: {
+          task_id_out: string
+          params_out: Json
+        }[]
+      }
+      func_initialize_tasks_table: {
+        Args: { p_table_name: string }
+        Returns: undefined
+      }
+      func_update_task_status: {
+        Args: {
+          p_table_name: string
+          p_task_id: string
+          p_status: string
+          p_output_location?: string
+        }
         Returns: undefined
       }
     }

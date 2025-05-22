@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Trash2, Info, Settings, CheckCircle, AlertTriangle, Download } from "lucide-react";
+import { Trash2, Info, Settings, CheckCircle, AlertTriangle, Download, Sparkles, PlusCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { 
   Tooltip, 
@@ -9,6 +9,8 @@ import {
 } from "@/components/ui/tooltip";
 import FullscreenImageModal from "@/components/ui/FullscreenImageModal";
 import { useToast } from "@/hooks/use-toast";
+import { DraggableImage } from './DraggableImage';
+import { Shot } from "../../types/shots";
 
 // Define the structure for individual LoRA details within metadata
 export interface MetadataLora {
@@ -53,6 +55,12 @@ interface ImageGalleryProps {
   onDelete?: (id: string) => void;
   isDeleting?: string | null;
   onApplySettings?: (metadata: DisplayableMetadata) => void;
+  onUpscale?: (imageId: string, imageUrl: string, currentMetadata?: DisplayableMetadata) => void; 
+  isUpscaling?: string | null; // To show loading state on the button
+  allShots: Shot[];
+  lastShotId?: string;
+  lastShotNameForTooltip?: string;
+  onAddToLastShot: (generationId: string, imageUrl?: string, thumbUrl?: string) => void;
 }
 
 // Helper to format metadata for display
@@ -86,7 +94,7 @@ const formatMetadataForDisplay = (metadata: DisplayableMetadata): string => {
   return displayText.trim() || "No metadata available.";
 };
 
-const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeleting, onApplySettings }) => {
+const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeleting, onApplySettings, onUpscale, isUpscaling, allShots, lastShotId, lastShotNameForTooltip, onAddToLastShot }) => {
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const [lightboxImageAlt, setLightboxImageAlt] = useState<string>("Fullscreen view"); // Store alt text for lightbox
   const [lightboxImageId, setLightboxImageId] = useState<string | undefined>(undefined); // Store ID for download name
@@ -160,6 +168,8 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeletin
             const imageKey = image.id || `image-${image.url}-${index}`;
             const isPlaceholder = !image.id;
             const isCurrentlyDeleting = isDeleting === image.id;
+            const isCurrentlyUpscaling = isUpscaling === image.id;
+            const isAlreadyUpscaled = image.metadata?.upscaled === true;
             
             // Determine aspect ratio for placeholder images or if metadata is missing width/height
             let aspectRatioPadding = '100%'; // Default to square
@@ -167,107 +177,183 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeletin
               aspectRatioPadding = `${(image.metadata.height / image.metadata.width) * 100}%`;
             }
 
+            // Check if the image is in any shot
+            const imageInShots = image.id ? allShots.filter(shot => 
+              shot.images.some(shotImage => shotImage.id === image.id)
+            ) : [];
+            const isInAnyShot = imageInShots.length > 0;
+
             return (
-              <div 
-                key={imageKey}
-                className="border rounded-lg overflow-hidden hover:shadow-md transition-shadow relative group"
-              >
-                <div className="relative w-full">
-                  <div style={{ paddingBottom: aspectRatioPadding }} className="relative bg-gray-200">
-                    <img
-                      src={image.url}
-                      alt={image.prompt || `Generated image ${index + 1}`}
-                      className="absolute inset-0 w-full h-full object-cover group-hover:opacity-80 transition-opacity duration-300"
-                      onDoubleClick={() => handleOpenLightbox(image)}
-                      style={{ cursor: 'pointer' }}
-                    />
+              <DraggableImage key={imageKey} image={image}>
+                <div 
+                  className="border rounded-lg overflow-hidden hover:shadow-md transition-shadow relative group"
+                >
+                  <div className="relative w-full">
+                    <div style={{ paddingBottom: aspectRatioPadding }} className="relative bg-gray-200">
+                      <img
+                        src={image.url}
+                        alt={image.prompt || `Generated image ${index + 1}`}
+                        className="absolute inset-0 w-full h-full object-cover group-hover:opacity-80 transition-opacity duration-300"
+                        onDoubleClick={() => handleOpenLightbox(image)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                    </div>
                   </div>
-                </div>
-                
-                {!isPlaceholder && (
-                  <>
-                    <div className="absolute top-2 right-2 flex flex-col gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {onDelete && (
-                         <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button 
-                              variant="destructive" 
-                              size="icon" 
-                              className="h-7 w-7 p-0 rounded-full"
-                              onClick={() => onDelete(image.id!)}
-                              disabled={isCurrentlyDeleting}
+                  
+                  {!isPlaceholder && (
+                    <>
+                      <div className="absolute top-2 left-2 flex flex-col gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {lastShotId && image.id && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button 
+                                variant="outline" 
+                                size="icon" 
+                                className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (image.id) onAddToLastShot(image.id, image.url, image.url);
+                                }}
+                                disabled={!lastShotId}
+                              >
+                                <PlusCircle className="h-3.5 w-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="right">
+                              <p>{lastShotId ? `Add to: ${lastShotNameForTooltip || 'Last Shot'}` : 'No shot to add to'}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
+                      <div className="absolute top-2 right-2 flex flex-col gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {onDelete && (
+                           <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button 
+                                variant="destructive" 
+                                size="icon" 
+                                className="h-7 w-7 p-0 rounded-full"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onDelete(image.id!);
+                                }}
+                                disabled={isCurrentlyDeleting}
+                              >
+                                {isCurrentlyDeleting ? (
+                                  <div className="h-3 w-3 animate-spin rounded-full border-b-2 border-white"></div>
+                                ) : (
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom"><p>Delete Image</p></TooltipContent>
+                          </Tooltip>
+                        )}
+                        {image.metadata && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button variant="secondary" size="icon" className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white">
+                                <Info className="h-3.5 w-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent 
+                              side="bottom" 
+                              className="max-w-md text-xs p-3 leading-relaxed shadow-lg bg-background border max-h-80 overflow-y-auto"
                             >
-                              {isCurrentlyDeleting ? (
-                                <div className="h-3 w-3 animate-spin rounded-full border-b-2 border-white"></div>
+                              {image.metadata.userProvidedImageUrl && (
+                                <img 
+                                  src={image.metadata.userProvidedImageUrl} 
+                                  alt="User provided image preview"
+                                  className="w-full h-auto max-h-24 object-contain rounded-sm mb-2 border"
+                                />
+                              )}
+                              <pre className="font-sans whitespace-pre-wrap">{formatMetadataForDisplay(image.metadata)}</pre>
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                        {image.metadata && onApplySettings && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button 
+                                variant="outline"
+                                size="icon" 
+                                className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  image.metadata && onApplySettings(image.metadata);
+                                }}
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-copy-plus"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/><path d="M15 12h6"/><path d="M18 9v6"/></svg>
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom"><p>Use these settings</p></TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
+                      <div className="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownloadImage(image.url, `artful_pane_craft_image_${image.id || index}.png`, image.id || imageKey);
+                              }}
+                              disabled={downloadingImageId === (image.id || imageKey)}
+                            >
+                              {downloadingImageId === (image.id || imageKey) ? (
+                                <div className="h-3 w-3 animate-spin rounded-full border-b-2 border-current"></div>
                               ) : (
-                                <Trash2 className="h-3.5 w-3.5" />
+                                <Download className="h-3.5 w-3.5" />
                               )}
                             </Button>
                           </TooltipTrigger>
-                          <TooltipContent side="bottom"><p>Delete Image</p></TooltipContent>
+                          <TooltipContent side="top"><p>Download Image</p></TooltipContent>
                         </Tooltip>
+                      </div>
+                      <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {onUpscale && image.id && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button 
+                                variant={isAlreadyUpscaled ? "ghost" : "outline"}
+                                size="icon" 
+                                className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!isAlreadyUpscaled && image.id && image.url && onUpscale) {
+                                    onUpscale(image.id, image.url, image.metadata);
+                                  }
+                                }}
+                                disabled={isCurrentlyUpscaling || isAlreadyUpscaled}
+                                title={isAlreadyUpscaled ? "Image is already upscaled" : "Upscale image"}
+                              >
+                                {isCurrentlyUpscaling ? (
+                                  <div className="h-3 w-3 animate-spin rounded-full border-b-2 border-white"></div>
+                                ) : isAlreadyUpscaled ? (
+                                  <CheckCircle className="h-3.5 w-3.5 text-green-400" />
+                                ) : (
+                                  <Sparkles className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top">
+                              <p>{isAlreadyUpscaled ? "Already upscaled" : "Upscale image (Replicate)"}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
+                      {isInAnyShot && (
+                        <div className="absolute top-10 left-2 text-xs text-sky-300 bg-black/50 px-1.5 py-0.5 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity">
+                          In {imageInShots.length > 1 ? `${imageInShots.length} shots` : `shot: ${imageInShots[0].name}`}
+                        </div>
                       )}
-                      {image.metadata && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button variant="secondary" size="icon" className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white">
-                              <Info className="h-3.5 w-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent 
-                            side="bottom" 
-                            className="max-w-md text-xs p-3 leading-relaxed shadow-lg bg-background border max-h-80 overflow-y-auto"
-                          >
-                            {image.metadata.userProvidedImageUrl && (
-                              <img 
-                                src={image.metadata.userProvidedImageUrl} 
-                                alt="User provided image preview"
-                                className="w-full h-auto max-h-24 object-contain rounded-sm mb-2 border"
-                              />
-                            )}
-                            <pre className="font-sans whitespace-pre-wrap">{formatMetadataForDisplay(image.metadata)}</pre>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {image.metadata && onApplySettings && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button 
-                              variant="outline"
-                              size="icon" 
-                              className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white"
-                              onClick={() => image.metadata && onApplySettings(image.metadata)}
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-copy-plus"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/><path d="M15 12h6"/><path d="M18 9v6"/></svg>
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="bottom"><p>Use these settings</p></TooltipContent>
-                        </Tooltip>
-                      )}
-                    </div>
-                    <div className="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-7 w-7 p-0 rounded-full bg-black/50 hover:bg-black/70 text-white"
-                            onClick={() => handleDownloadImage(image.url, `artful_pane_craft_image_${image.id || index}.png`, image.id || imageKey)}
-                            disabled={downloadingImageId === (image.id || imageKey)}
-                          >
-                            {downloadingImageId === (image.id || imageKey) ? (
-                              <div className="h-3 w-3 animate-spin rounded-full border-b-2 border-current"></div>
-                            ) : (
-                              <Download className="h-3.5 w-3.5" />
-                            )}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top"><p>Download Image</p></TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </>
-                )}
-              </div>
+                    </>
+                  )}
+                </div>
+              </DraggableImage>
             );
           })}
         </div>

@@ -110,13 +110,13 @@ export const PromptInputRow: React.FC<PromptInputRowProps> = ({
     if (isEditingFullPrompt) {
         currentPlaceholder = `Editing detailed prompt #${index + 1}...`;
     } else if (isActiveForFullView && effectiveShortPrompt) {
-        currentPlaceholder = `Full prompt shown. Click to edit. (Summary: ${effectiveShortPrompt})`;
+        currentPlaceholder = `Full prompt shown. (Summary: ${effectiveShortPrompt})`;
     } else {
         currentPlaceholder = `Full prompt shown. Click to edit.`;
     }
   } else if (effectiveShortPrompt) {
     displayText = effectiveShortPrompt;
-    currentPlaceholder = `Click or hover to see/edit full prompt... (Summary: ${effectiveShortPrompt})`;
+    currentPlaceholder = `Click to see/edit full prompt... (Summary: ${effectiveShortPrompt})`;
     isShowingShort = true;
   }
 
@@ -126,7 +126,7 @@ export const PromptInputRow: React.FC<PromptInputRowProps> = ({
       const scrollHeight = textareaRef.current.scrollHeight;
       let baseHeight = 60;
       if (isShowingShort && !isActiveForFullView && !isEditingFullPrompt) {
-         baseHeight = Math.max(40, Math.min(scrollHeight, 80)); 
+         baseHeight = Math.max(36, Math.min(scrollHeight, 60)); 
       } else { 
          baseHeight = Math.max(60, scrollHeight);
       }
@@ -136,7 +136,7 @@ export const PromptInputRow: React.FC<PromptInputRowProps> = ({
 
   useEffect(() => {
     autoResizeTextarea();
-  }, [displayText, isActiveForFullView, isEditingFullPrompt]);
+  }, [displayText, isActiveForFullView, isEditingFullPrompt, isShowingShort]);
 
   useEffect(() => { autoResizeTextarea(); }, []);
 
@@ -153,24 +153,13 @@ export const PromptInputRow: React.FC<PromptInputRowProps> = ({
     setIsEditingFullPrompt(false);
   };
 
-  const handleMouseEnter = () => {
-    if (!isEditingFullPrompt && effectiveShortPrompt && !isActiveForFullView) {
-      onSetActiveForFullView(promptEntry.id);
-    }
-  };
-
   return (
     <div 
       className="p-3 border rounded-md space-y-2 bg-slate-50/50 dark:bg-slate-800/30"
-      onMouseEnter={handleMouseEnter}
     >
       <div className="flex justify-between items-center">
         <Label htmlFor={`fullPrompt-${promptEntry.id}`} className="text-sm font-medium">
           Prompt #{index + 1}
-          {isShowingShort && <span className="text-xs text-muted-foreground ml-2">({effectiveShortPrompt})</span>} 
-          {!isShowingShort && effectiveShortPrompt && !isEditingFullPrompt && <span className="text-xs text-muted-foreground ml-2">(Full view)</span>}
-          {isEditingFullPrompt && effectiveShortPrompt && <span className="text-xs text-muted-foreground ml-2">(Editing full)</span>}
-          {isEditingFullPrompt && !effectiveShortPrompt && <span className="text-xs text-muted-foreground ml-2">(Editing)</span>}
         </Label>
         <div className="flex items-center space-x-1">
           {onEditWithAI && aiEditButtonIcon && hasApiKey && (
@@ -227,9 +216,11 @@ export const PromptInputRow: React.FC<PromptInputRowProps> = ({
           onFocus={handleFocus}
           onBlur={handleBlur}
           placeholder={currentPlaceholder}
-          className={`mt-1 min-h-[60px] resize-none overflow-y-hidden ${isShowingShort ? 'cursor-pointer' : ''}`}
+          className={`mt-1 resize-none overflow-y-hidden ${
+            isShowingShort && !isActiveForFullView && !isEditingFullPrompt ? 'min-h-[36px] cursor-pointer' : 'min-h-[60px]'
+          }`}
           disabled={!hasApiKey || isGenerating}
-          readOnly={!isEditingFullPrompt && isActiveForFullView && !!effectiveShortPrompt}
+          readOnly={!isEditingFullPrompt && isActiveForFullView && !!effectiveShortPrompt && !isShowingShort}
           rows={1} 
         />
       </div>
@@ -573,6 +564,7 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
                   </Button>
                 )}
                 <Button
+                  type="button"
                   variant="outline"
                   size="sm"
                   onClick={() => setIsPromptModalOpen(true)} 
@@ -650,6 +642,12 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
               )}
             </div>
           </div>
+
+          <div className="space-y-6 pt-4 border-t">
+            <h3 className="text-md font-semibold">ControlNet Strengths:</h3>
+            <SliderWithValue label="Depth Strength" value={depthStrength} onChange={setDepthStrength} disabled={!hasApiKey || isGenerating}/>
+            <SliderWithValue label="Soft Edge Strength" value={softEdgeStrength} onChange={setSoftEdgeStrength} disabled={!hasApiKey || isGenerating}/>
+          </div>
         </div>
 
         <div className="space-y-6">
@@ -703,11 +701,6 @@ const ImageGenerationForm = forwardRef<ImageGenerationFormHandles, ImageGenerati
                 </div>
               </TooltipProvider>
             )}
-          </div>
-          <div className="space-y-6 pt-2 border-t mt-4">
-             <h3 className="text-md font-semibold">ControlNet Strengths:</h3>
-            <SliderWithValue label="Depth Strength" value={depthStrength} onChange={setDepthStrength} disabled={!hasApiKey || isGenerating}/>
-            <SliderWithValue label="Soft Edge Strength" value={softEdgeStrength} onChange={setSoftEdgeStrength} disabled={!hasApiKey || isGenerating}/>
           </div>
         </div>
 

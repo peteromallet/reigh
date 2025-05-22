@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { PromptEntry, PromptInputRow, PromptInputRowProps } from '@/components/ImageGenerationForm';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -109,6 +109,7 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
         scrollRef.current.scrollTop = 0;
       }
       console.log("[PromptEditorModal] Modal is OPENING. Initializing state from props and localStorage.");
+      setPromptToEdit(null); // Ensure individual edit modal is not open from a previous interaction
       
       // 1. Set internal prompts from initialPrompts (deep copy)
       console.log(`[PromptEditorModal] Initializing internalPrompts from initialPrompts on open. Current initialPrompts count: ${initialPrompts.length}`);
@@ -353,156 +354,195 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => {
-      if (!open) {
-        handleFinalSaveAndClose();
-      }
-    }}>
-      <DialogContent className="max-w-4xl h-[90vh] flex flex-col p-0">
-        <DialogHeader className="p-6 pb-2">
-          <DialogTitle className="flex items-center">
-            <Edit size={20} className="mr-2" />
-            Advanced Prompt Editor
-          </DialogTitle>
-        </DialogHeader>
+    <> {/* Fragment to hold main modal and individual edit modal */}
+      <Dialog open={isOpen} onOpenChange={(open) => {
+        if (!open) {
+          handleFinalSaveAndClose();
+        }
+      }}>
+        <DialogContent className="max-w-4xl h-[90vh] flex flex-col p-0">
+          <DialogHeader className="p-6 pb-2">
+            <DialogTitle className="flex items-center">
+              <Edit size={20} className="mr-2" />
+              Advanced Prompt Editor
+            </DialogTitle>
+          </DialogHeader>
 
-        {!actualCanUseAI && (
-          <div className="m-6 p-3 mb-0 bg-yellow-50 border-l-4 border-yellow-400 text-yellow-700 rounded text-sm">
-            <p className="flex items-center"><AlertTriangle className="h-5 w-5 mr-2 flex-shrink-0" /> AI features (generation/editing) are disabled. An API key is required.</p>
-          </div>
-        )}
+          {!actualCanUseAI && (
+            <div className="m-6 p-3 mb-0 bg-yellow-50 border-l-4 border-yellow-400 text-yellow-700 rounded text-sm">
+              <p className="flex items-center"><AlertTriangle className="h-5 w-5 mr-2 flex-shrink-0" /> AI features (generation/editing) are disabled. An API key is required.</p>
+            </div>
+          )}
 
-        {/* Combined Scrollable Area */}
-        <ScrollArea className="flex-grow" ref={scrollRef} onScroll={handleScroll}>
-          <div className="p-6 pt-2">
-            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as EditorMode)} className="w-full">
-              <TabsList className="grid w-full grid-cols-2 mb-4">
-                <TabsTrigger value="generate"><Wand2Icon className="mr-2 h-4 w-4" />Generate Prompts</TabsTrigger>
-                <TabsTrigger value="bulk-edit"><PackagePlus className="mr-2 h-4 w-4" />Bulk Edit Existing</TabsTrigger>
-              </TabsList>
+          {/* Combined Scrollable Area */}
+          <ScrollArea className="flex-grow" ref={scrollRef} onScroll={handleScroll}>
+            <div className="p-6 pt-2">
+              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as EditorMode)} className="w-full">
+                <TabsList className="grid w-full grid-cols-2 mb-4">
+                  <TabsTrigger value="generate"><Wand2Icon className="mr-2 h-4 w-4" />Generate Prompts</TabsTrigger>
+                  <TabsTrigger value="bulk-edit"><PackagePlus className="mr-2 h-4 w-4" />Bulk Edit Existing</TabsTrigger>
+                </TabsList>
 
-              {/* Tab Content */}
-              <div className="mt-4 min-h-[200px]">
-                <TabsContent value="generate" className="space-y-4">
-                  <PromptGenerationControls
-                    initialValues={generationControlValues}
-                    onValuesChange={handleGenerationValuesChange}
-                    onGenerate={handleGenerateAndAddPrompts}
-                    isGenerating={isAIGenerating}
-                    hasApiKey={actualCanUseAI}
-                    existingPromptsForContext={existingPromptsForAIContext}
-                  />
-                </TabsContent>
-                <TabsContent value="bulk-edit" className="space-y-4">
-                  <BulkEditControls
-                    initialValues={bulkEditControlValues}
-                    onValuesChange={handleBulkEditValuesChange}
-                    onBulkEdit={handleBulkEditPrompts}
-                    isEditing={isAIEditing}
-                    hasApiKey={actualCanUseAI}
-                    numberOfPromptsToEdit={internalPrompts.length}
-                  />
-                </TabsContent>
+                {/* Tab Content */}
+                <div className="mt-4 min-h-[200px]">
+                  <TabsContent value="generate" className="space-y-4">
+                    <PromptGenerationControls
+                      initialValues={generationControlValues}
+                      onValuesChange={handleGenerationValuesChange}
+                      onGenerate={handleGenerateAndAddPrompts}
+                      isGenerating={isAIGenerating}
+                      hasApiKey={actualCanUseAI}
+                      existingPromptsForContext={existingPromptsForAIContext}
+                    />
+                  </TabsContent>
+                  <TabsContent value="bulk-edit" className="space-y-4">
+                    <BulkEditControls
+                      initialValues={bulkEditControlValues}
+                      onValuesChange={handleBulkEditValuesChange}
+                      onBulkEdit={handleBulkEditPrompts}
+                      isEditing={isAIEditing}
+                      hasApiKey={actualCanUseAI}
+                      numberOfPromptsToEdit={internalPrompts.length}
+                    />
+                  </TabsContent>
+                </div>
+              </Tabs>
+              
+              {/* Prompts List Section (always visible, below tabs) */}
+              <div className="mt-6 space-y-3">
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-lg font-semibold" id="prompts-section">
+                    Prompts ({internalPrompts.length})
+                  </h3>
+                  <Button variant="outline" size="sm" onClick={handleInternalAddBlankPrompt} className="gap-1">
+                    <PlusCircle size={16} /> Add Blank
+                  </Button>
+                </div>
+                {internalPrompts.length === 0 && (
+                  <div className="text-center text-muted-foreground py-8">
+                    <p>No prompts yet.</p>
+                    <p>Use the controls above to generate new prompts, or add blank ones to start.</p>
+                  </div>
+                )}
+                {internalPrompts.map((prompt, index) => {
+                  const handleUpdateForRow: PromptInputRowProps['onUpdate'] = (id, field, value) => {
+                    handleInternalUpdatePrompt(id, { [field]: value });
+                  };
+
+                  return (
+                    <PromptInputRow
+                      key={prompt.id}
+                      promptEntry={prompt}
+                      index={index}
+                      onUpdate={handleUpdateForRow}
+                      onRemove={() => handleInternalRemovePrompt(prompt.id)}
+                      canRemove={internalPrompts.length > 1}
+                      isGenerating={isAILoading}
+                      hasApiKey={actualCanUseAI}
+                      onEditWithAI={actualCanUseAI ? () => openEditWithAIForm(prompt.id, prompt.fullPrompt) : undefined}
+                      aiEditButtonIcon={<Wand2Icon className="h-4 w-4" />}
+                      onSetActiveForFullView={setActivePromptIdForFullView}
+                      isActiveForFullView={activePromptIdForFullView === prompt.id}
+                    />
+                  );
+                })}
               </div>
-            </Tabs>
-            
-            {/* Prompts List Section (always visible, below tabs) */}
-            <div className="mt-6 space-y-3">
-              <div className="flex justify-between items-center mb-2">
-                <h3 className="text-lg font-semibold" id="prompts-section">
-                  Prompts ({internalPrompts.length})
-                </h3>
-                <Button variant="outline" size="sm" onClick={handleInternalAddBlankPrompt} className="gap-1">
-                  <PlusCircle size={16} /> Add Blank
+            </div>
+          </ScrollArea>
+
+          {showScrollToTop && (
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={scrollToTop}
+              className="absolute bottom-24 right-6 z-50 rounded-full shadow-lg"
+              aria-label="Scroll to top"
+            >
+              <ArrowUp size={20} />
+            </Button>
+          )}
+
+          <DialogFooter className="p-6 pt-3 border-t mt-auto">
+            <div className="flex w-full justify-between items-center">
+              <div className="text-xs text-muted-foreground min-h-[16px]">
+                {isAILoading && "AI is thinking..."}
+                {isAIEditing && "AI is editing..."}
+                {isAIGenerating && "AI is generating..."}
+              </div>
+              <div className="flex gap-2">
+                <DialogClose asChild>
+                  <Button variant="outline" onClick={() => {
+                      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+                      setShowScrollToTop(false);
+                      onClose();
+                  }}>Cancel</Button>
+                </DialogClose>
+                <Button onClick={handleFinalSaveAndClose}>
+                  Save & Close Prompts
                 </Button>
               </div>
-              {internalPrompts.length === 0 && (
-                <div className="text-center text-muted-foreground py-8">
-                  <p>No prompts yet.</p>
-                  <p>Use the controls above to generate new prompts, or add blank ones to start.</p>
-                </div>
-              )}
-              {internalPrompts.map((prompt, index) => {
-                const handleUpdateForRow: PromptInputRowProps['onUpdate'] = (id, field, value) => {
-                  handleInternalUpdatePrompt(id, { [field]: value });
-                };
-
-                return (
-                  <PromptInputRow
-                    key={prompt.id}
-                    promptEntry={prompt}
-                    index={index}
-                    onUpdate={handleUpdateForRow}
-                    onRemove={() => handleInternalRemovePrompt(prompt.id)}
-                    canRemove={internalPrompts.length > 1}
-                    isGenerating={isAILoading}
-                    hasApiKey={actualCanUseAI}
-                    onEditWithAI={actualCanUseAI ? () => openEditWithAIForm(prompt.id, prompt.fullPrompt) : undefined}
-                    onSetActiveForFullView={setActivePromptIdForFullView}
-                    isActiveForFullView={activePromptIdForFullView === prompt.id}
-                  />
-                );
-              })}
             </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-            {/* AI Edit Form Section */}
-            {promptToEdit && (
-              <div className="mt-6 p-4 border rounded-lg shadow-sm">
-                <h4 className="text-md font-semibold mb-2">Edit Prompt with AI</h4>
-                <Label htmlFor="ai-edit-instructions">Editing Instructions for AI:</Label>
+      {/* Individual AI Edit Dialog */}
+      {promptToEdit && actualCanUseAI && (
+        <Dialog open={promptToEdit !== null} onOpenChange={(open) => { if (!open) setPromptToEdit(null); }}>
+          <DialogContent className="sm:max-w-[525px]">
+            <DialogHeader>
+              <DialogTitle>Edit Prompt with AI</DialogTitle>
+              <DialogDescription>
+                Refine the selected prompt using AI. Your original prompt will be shown for reference.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="space-y-1">
+                <Label htmlFor="ai-edit-original">Original Prompt</Label>
+                <Textarea
+                  id="ai-edit-original"
+                  value={promptToEdit.originalText}
+                  readOnly
+                  className="h-28 bg-muted/30 border-muted/50 focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                  rows={4}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="ai-edit-instructions">Your Editing Instructions</Label>
                 <Textarea
                   id="ai-edit-instructions"
                   value={promptToEdit.instructions}
                   onChange={(e) => setPromptToEdit(prev => prev ? { ...prev, instructions: e.target.value } : null)}
                   placeholder="e.g., 'Make this more poetic', 'Shorten to one sentence', 'Translate to French'"
-                  className="min-h-[80px] mb-2"
+                  className="min-h-[100px]"
+                  autoFocus
                 />
-                <div className="flex justify-end gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => setPromptToEdit(null)}>Cancel</Button>
-                  <Button size="sm" onClick={handleConfirmEditWithAI} disabled={isAIEditing || !promptToEdit.instructions.trim()}>
-                    {isAIEditing ? "Editing..." : "Confirm & Edit with AI"}
-                  </Button>
-                </div>
               </div>
-            )}
-          </div>
-        </ScrollArea>
-
-        {showScrollToTop && (
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={scrollToTop}
-            className="absolute bottom-24 right-6 z-50 rounded-full shadow-lg"
-            aria-label="Scroll to top"
-          >
-            <ArrowUp size={20} />
-          </Button>
-        )}
-
-        <DialogFooter className="p-6 pt-3 border-t mt-auto">
-          <div className="flex w-full justify-between items-center">
-            <div className="text-xs text-muted-foreground min-h-[16px]">
-              {isAILoading && "AI is thinking..."}
-              {isAIEditing && "AI is editing..."}
-              {isAIGenerating && "AI is generating..."}
+              {/* 
+              Future enhancement: Could add modelType selector here if needed.
+              Current modelType: {promptToEdit.modelType} 
+              */}
             </div>
-            <div className="flex gap-2">
-              <DialogClose asChild>
-                <Button variant="outline" onClick={() => {
-                    if (scrollRef.current) scrollRef.current.scrollTop = 0;
-                    setShowScrollToTop(false);
-                    onClose();
-                }}>Cancel</Button>
-              </DialogClose>
-              <Button onClick={handleFinalSaveAndClose}>
-                Save & Close Prompts
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPromptToEdit(null)}>Cancel</Button>
+              <Button onClick={handleConfirmEditWithAI} disabled={isAIEditing || !promptToEdit.instructions.trim()}>
+                {isAIEditing ? (
+                  <>
+                    <Wand2Icon className="mr-2 h-4 w-4 animate-pulse" />
+                    Editing...
+                  </>
+                ) : (
+                  <>
+                    <Wand2Icon className="mr-2 h-4 w-4" />
+                    Apply AI Edit
+                  </>
+                )}
               </Button>
-            </div>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 };
 

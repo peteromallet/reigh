@@ -8,6 +8,17 @@ import { supabase } from "@/integrations/supabase/client";
 import { uploadImageToStorage } from "@/utils/imageUploader";
 import { Json } from "@/integrations/supabase/types";
 import { Button } from "@/components/ui/button";
+import ShotsPane from "../../components/ShotsPane";
+import { useListShots, useAddImageToShot } from "../../hooks/useShots";
+import { Shot } from "../../types/shots";
+import { useLastAffectedShot } from "../App";
+
+// Define the Replicate API version for crisp upscale - MOVED TO EDGE FUNCTION
+// const REPLICATE_UPSCALE_VERSION = "e406f0e22b6849f8703991f880310d9462747150c581901f1ba51b8360e10040";
+// const REPLICATE_API_URL = "https://api.replicate.com/v1/predictions";
+
+// Helper function to delay execution - MOVED TO EDGE FUNCTION
+// const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // This interface defines the rich LoRA structure we expect from the form and want to save in metadata
 interface StoredActiveLora {
@@ -38,8 +49,10 @@ const Index = () => {
   const [currentImageCount, setCurrentImageCount] = useState<number>(0);
   const [falApiKey, setFalApiKey] = useState<string>('');
   const [openaiApiKey, setOpenaiApiKey] = useState<string>('');
+  const [replicateApiKey, setReplicateApiKey] = useState<string>('');
   const [showPlaceholders, setShowPlaceholders] = useState(true);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [isUpscalingImageId, setIsUpscalingImageId] = useState<string | null>(null);
   
   const imageGenerationFormRef = useRef<ImageGenerationFormHandles>(null);
   const cancelGenerationRef = useRef(false);
@@ -48,11 +61,18 @@ const Index = () => {
   // State for detailed progress tracking
   const [generationProgress, setGenerationProgress] = useState<{ currentPromptNum: number; currentImageInPrompt: number; totalPrompts: number; imagesPerPrompt: number; currentOverallImageNum: number; totalOverallImages: number; } | null>(null);
 
+  // Fetch shots data
+  const { data: shots, isLoading: isLoadingShots, error: shotsError } = useListShots();
+  const addImageToShotMutation = useAddImageToShot();
+  const { lastAffectedShotId, setLastAffectedShotId } = useLastAffectedShot();
+
   useEffect(() => {
     const falKey = initializeFalClient();
     setFalApiKey(falKey);
     const storedOpenaiKey = localStorage.getItem('openai_api_key') || "";
     setOpenaiApiKey(storedOpenaiKey);
+    const storedReplicateKey = localStorage.getItem('replicate_api_key') || "";
+    setReplicateApiKey(storedReplicateKey);
     fetchGeneratedImages();
   }, []);
   
@@ -82,12 +102,14 @@ const Index = () => {
     } catch (error) { console.error('Error fetching images:', error); toast.error("An error occurred while fetching images."); }
   };
 
-  const handleSaveApiKeys = (newFalApiKey: string, newOpenaiApiKey: string) => {
+  const handleSaveApiKeys = (newFalApiKey: string, newOpenaiApiKey: string, newReplicateApiKey: string) => {
     localStorage.setItem('fal_api_key', newFalApiKey);
     localStorage.setItem('openai_api_key', newOpenaiApiKey);
+    localStorage.setItem('replicate_api_key', newReplicateApiKey);
     fal.config({ credentials: newFalApiKey });
     setFalApiKey(newFalApiKey);
     setOpenaiApiKey(newOpenaiApiKey);
+    setReplicateApiKey(newReplicateApiKey);
     toast.success("API keys updated successfully");
   };
   
@@ -100,6 +122,86 @@ const Index = () => {
       toast.success("Image deleted successfully");
     } catch (error) { console.error('Error deleting image:', error); toast.error("Failed to delete image");
     } finally { setIsDeleting(null); }
+  };
+
+  const handleUpscaleImage = async (imageId: string, imageUrl: string, currentMetadata?: DisplayableMetadata) => {
+    setIsUpscalingImageId(imageId);
+    const toastId = `upscale-${imageId}`;
+    toast.info("Sending request to DEBUG upscale function...", { id: toastId });
+
+    try {
+      const { data: functionData, error: functionError } = await supabase.functions.invoke("hello-debug", {
+        body: { imageUrl },
+      });
+
+      if (functionError) {
+        console.error("Supabase Edge Function error:", functionError);
+        let errorMessage = functionError.message;
+        try {
+          // Attempt to parse for a more specific error message from the function's response
+          const parsedError = JSON.parse(functionError.message);
+          if (parsedError && parsedError.error) {
+            errorMessage = parsedError.error;
+          }
+        } catch (e) { /* Ignore if parsing fails */ }
+        throw new Error(`Upscale request failed: ${errorMessage}`);
+      }
+
+      console.log("Debug function response data:", functionData);
+
+      if (!functionData || !functionData.upscaledImageUrl) {
+        console.error("Debug Edge function returned unexpected data:", functionData);
+        // Check if it's the intentional "imageUrl is missing" message from debug function
+        if (functionData && functionData.message && functionData.message.includes("imageUrl is missing")) {
+          throw new Error("Debug function reports: imageUrl is missing in payload.");
+        }
+        throw new Error("Debug upscale completed but did not return a valid image URL or expected message.");
+      }
+
+      const upscaledImageUrl = functionData.upscaledImageUrl;
+      toast.success(`Debug upscale successful! Mock URL: ${upscaledImageUrl}. Message: ${functionData.message}`, { id: toastId, duration: 5000 });
+
+      // Update Supabase database (with mock data)
+      const newMetadata: DisplayableMetadata = {
+        ...(currentMetadata || {}),
+        upscaled: true,
+        original_image_url: imageUrl, // Store the original URL
+      };
+
+      const { data: updatedData, error: updateError } = await supabase
+        .from('generations')
+        .update({ 
+          image_url: upscaledImageUrl, 
+          metadata: newMetadata as Json 
+        })
+        .eq('id', imageId)
+        .select()
+        .single();
+
+      if (updateError) {
+        console.error("Supabase DB update error:", updateError);
+        throw new Error(`Failed to save upscaled image to database: ${updateError.message}`);
+      }
+
+      // Update local state
+      if (updatedData) {
+          setGeneratedImages(prevImages =>
+            prevImages.map(img => 
+              img.id === imageId 
+                ? { ...img, url: upscaledImageUrl!, metadata: newMetadata } 
+                : img
+            )
+          );
+        toast.success("Upscaled image saved and gallery updated.", { id: toastId });
+      }
+
+    } catch (error) {
+      console.error("Error during upscale process:", error);
+      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred during upscaling.";
+      toast.error(errorMessage, { id: toastId });
+    } finally {
+      setIsUpscalingImageId(null);
+    }
   };
 
   const handleCancelGeneration = () => {
@@ -307,6 +409,38 @@ const Index = () => {
 
   const hasValidFalApiKey = !!falApiKey && falApiKey.trim() !== '' && falApiKey !== '0b6f1876-0aab-4b56-b821-b384b64768fa:121392c885a381f93de56d701e3d532f';
 
+  // Determine the target shot ID for the "Add to last shot" button
+  // Priority: lastAffectedShotId (from context), then most recently created shot
+  const targetShotIdForButton = lastAffectedShotId || (shots && shots.length > 0 ? shots[0].id : undefined);
+  const targetShotNameForButtonTooltip = targetShotIdForButton 
+    ? (shots?.find(s => s.id === targetShotIdForButton)?.name || 'Selected Shot')
+    : (shots && shots.length > 0 ? shots[0].name : 'Last Shot');
+
+  const handleAddImageToTargetShot = async (generationId: string, imageUrl?: string, thumbUrl?: string) => {
+    if (!targetShotIdForButton) {
+      toast.error("No target shot available to add to. Create a shot first or interact with one.");
+      return;
+    }
+    if (!generationId) {
+        toast.error("Image has no ID, cannot add to shot.");
+        return;
+    }
+    try {
+      await addImageToShotMutation.mutateAsync({
+        shot_id: targetShotIdForButton,
+        generation_id: generationId,
+        imageUrl: imageUrl,
+        thumbUrl: thumbUrl,
+      });
+      // Update the last affected shot ID in context after successful addition
+      setLastAffectedShotId(targetShotIdForButton);
+      toast.success(`Image added to ${shots?.find(s => s.id === targetShotIdForButton)?.name || 'shot'}`);
+    } catch (error) {
+      console.error("Error adding image to target shot:", error);
+      toast.error("Failed to add image to shot.");
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto py-8 px-4 relative">
@@ -353,10 +487,22 @@ const Index = () => {
                 </Button>
               </div>
             )}
-            <ImageGallery images={generatedImages} onDelete={handleDeleteImage} isDeleting={isDeleting} onApplySettings={handleApplySettingsFromGallery} />
+            <ImageGallery 
+              images={generatedImages} 
+              onDelete={handleDeleteImage} 
+              isDeleting={isDeleting} 
+              onApplySettings={handleApplySettingsFromGallery} 
+              onUpscale={handleUpscaleImage} 
+              isUpscaling={isUpscalingImageId}
+              allShots={shots || []}
+              lastShotId={targetShotIdForButton}
+              lastShotNameForTooltip={targetShotNameForButtonTooltip}
+              onAddToLastShot={handleAddImageToTargetShot}
+            />
           </div>
         </div>
       </div>
+      <ShotsPane />
     </div>
   );
 };

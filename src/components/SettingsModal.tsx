@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { Settings } from "lucide-react";
 import {
@@ -16,7 +15,7 @@ import { toast } from "sonner";
 
 interface SettingsModalProps {
   currentFalApiKey: string;
-  onSaveApiKeys: (falApiKey: string, openaiApiKey: string) => void;
+  onSaveApiKeys: (falApiKey: string, openaiApiKey: string, replicateApiKey: string) => void;
 }
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -25,9 +24,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [falApiKey, setFalApiKey] = useState<string>(currentFalApiKey);
   const [openaiApiKey, setOpenaiApiKey] = useState<string>("");
+  const [replicateApiKey, setReplicateApiKey] = useState<string>("");
   const [isOpen, setIsOpen] = useState(false);
   const [isFalKeyMasked, setIsFalKeyMasked] = useState(false);
   const [isOpenAIKeyMasked, setIsOpenAIKeyMasked] = useState(false);
+  const [isReplicateKeyMasked, setIsReplicateKeyMasked] = useState(false);
 
   // Load API keys from localStorage if they exist
   useEffect(() => {
@@ -42,6 +43,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       setOpenaiApiKey(storedOpenaiKey);
       setIsOpenAIKeyMasked(true);
     }
+
+    const storedReplicateKey = localStorage.getItem('replicate_api_key') || "";
+    if (storedReplicateKey) {
+      setReplicateApiKey(storedReplicateKey);
+      setIsReplicateKeyMasked(true);
+    }
   }, [currentFalApiKey]);
 
   const handleSave = () => {
@@ -55,7 +62,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       ? localStorage.getItem('openai_api_key') || "" 
       : openaiApiKey;
     
-    onSaveApiKeys(newFalKey, newOpenAIKey);
+    const newReplicateKey = isReplicateKeyMasked && replicateApiKey === "••••••••••••••••••••••"
+      ? localStorage.getItem('replicate_api_key') || ""
+      : replicateApiKey;
+
+    onSaveApiKeys(newFalKey, newOpenAIKey, newReplicateKey);
     setIsOpen(false);
     toast.success("Settings saved successfully");
   };
@@ -68,6 +79,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleOpenAIKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setOpenaiApiKey(e.target.value);
     setIsOpenAIKeyMasked(false);
+  };
+
+  const handleReplicateKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setReplicateApiKey(e.target.value);
+    setIsReplicateKeyMasked(false);
   };
 
   return (
@@ -117,6 +133,20 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             />
             <p className="text-xs text-gray-500">
               Will be used for future AI features.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="replicate-api-key">Replicate API Key</Label>
+            <Input
+              id="replicate-api-key"
+              type="text"
+              value={isReplicateKeyMasked ? "••••••••••••••••••••••" : replicateApiKey}
+              onChange={handleReplicateKeyChange}
+              placeholder="Enter your Replicate API key"
+              className="w-full"
+            />
+            <p className="text-xs text-gray-500">
+              Used for upscaling images with Replicate.
             </p>
           </div>
         </div>
