@@ -5,15 +5,17 @@ import NewGroupDropZone from './NewGroupDropZone'; // Adjust path as needed
 // Import hooks and types
 import { useListShots } from '@/shared/hooks/useShots'; // Adjust path
 import { Shot } from '@/types/shots'; // Adjust path
+import { useProject } from "@/shared/contexts/ProjectContext"; // Import useProject
 
 const ShotsPane: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [isHoveringPane, setIsHoveringPane] = useState(false);
   const hotZoneRef = useRef<HTMLDivElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
-  let leaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const leaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const { data: shots, isLoading, error } = useListShots(); // Now directly returns Shot[]
+  const { selectedProjectId } = useProject(); // Get selectedProjectId
+  const { data: shots, isLoading, error } = useListShots(selectedProjectId); // Pass projectId
 
   const handleHotZoneEnter = () => {
     if (leaveTimeoutRef.current) {

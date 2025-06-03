@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { fal } from '@fal-ai/client';
+// import { fal } from '@fal-ai/client'; // REMOVE if not used
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { uploadImageToStorage } from '@/shared/lib/imageUploader';
@@ -12,7 +12,6 @@ import { nanoid } from 'nanoid';
 export interface FalImageGenerationParams {
   prompts: PromptEntry[];
   imagesPerPrompt: number;
-  // Fal specific parameters
   falModelId?: string; // e.g., "fal-ai/flux-general"
   numInferenceSteps?: number;
   enableSafetyChecker?: boolean;
@@ -22,37 +21,37 @@ export interface FalImageGenerationParams {
   maxShift?: number;
   scheduler?: string;
   imageSize?: string; // e.g., "portrait_16_9"
-  // ControlNet and LoRA parameters
   loras?: { path: string; scale: string }[];
-  controlnets?: { path: string; end_percentage: number; conditioning_scale: number; control_image_url: string }[];
-  controlLoras?: { path: string; preprocess: string; control_image_url: string; scale: string }[];
-  // Starting image handling
+  controlnets?: { path: string; end_percentage: number; conditioning_scale: number; control_image_url: string }[]; // control_image_url might be prepared by the hook
+  controlLoras?: { path: string; preprocess: string; control_image_url: string; scale: string }[]; // control_image_url might be prepared by the hook
   startingImageFile?: File | null;
-  appliedStartingImageUrl?: string | null;
-  // Metadata
-  fullSelectedLorasForMetadata?: MetadataLora[];
+  appliedStartingImageUrl?: string | null; // If image already uploaded
+  fullSelectedLorasForMetadata?: MetadataLora[]; // This seems more for metadata AFTER generation, review if needed in task params
   depthStrength?: number;
   softEdgeStrength?: number;
-  toolType?: string; // e.g., 'image-generation' or 'edit-travel'
-  originalFrameTimestamp?: number; // Added for video frame tracking
-  original_image_filename?: string; // Added for tracking original file name
-  customMetadataFields?: Record<string, any>; // For passthrough to metadata.api_parameters
+  toolType: string; // e.g., 'image_generation_flux', 'edit_travel_flux'. Used for task_type.
+  originalFrameTimestamp?: number;
+  original_image_filename?: string;
+  customMetadataFields?: Record<string, any>;
+  // Add projectId here if we decide to pass it to the hook directly instead of generateImages
 }
 
-export interface FalGenerationProgress {
-  currentPromptNum: number;
-  currentImageInPrompt: number;
-  totalPrompts: number;
-  imagesPerPrompt: number;
-  currentOverallImageNum: number;
-  totalOverallImages: number;
+// Remove FalGenerationProgress - progress will be tracked via task status
+// export interface FalGenerationProgress { ... }
+
+export interface CreatedTaskInfo {
+  taskId: string;
+  // Potentially include other task details if needed by the caller immediately
 }
 
 export interface UseFalImageGenerationResult {
-  isGenerating: boolean;
-  generationProgress: FalGenerationProgress | null;
-  generateImages: (params: FalImageGenerationParams) => Promise<GeneratedImageWithMetadata[]>;
-  cancelGeneration: () => void;
+  isCreatingTask: boolean; // Renamed from isGenerating
+  // Remove generationProgress
+  // generateImages function signature changes
+  createGenerationTask: (params: FalImageGenerationParams, selectedProjectId: string) => Promise<CreatedTaskInfo | null>;
+  // cancelGeneration might be removed or re-purposed if we can cancel task creation itself,
+  // but cancelling a pending task in DB is a different operation. For now, remove.
+  // cancelGeneration: () => void; 
 }
 
 const defaultFalModelId = "fal-ai/flux-general";
@@ -102,330 +101,200 @@ const mapAspectRatioToFalImageSize = (aspectRatio?: string): string | undefined 
 };
 
 export const useFalImageGeneration = (): UseFalImageGenerationResult => {
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generationProgress, setGenerationProgress] = useState<FalGenerationProgress | null>(null);
-  const cancelGenerationRef = useRef(false);
-  const currentSubscriptionRef = useRef<any>(null);
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
+  // const cancelGenerationRef = useRef(false); // Remove, task cancellation is different
+  // const currentSubscriptionRef = useRef<any>(null); // Remove
 
-  const cancelGeneration = useCallback(() => {
-    console.log("[useFalImageGeneration] cancelGeneration called.");
-    toast.info("Cancelling image generation...");
-    cancelGenerationRef.current = true;
-    if (currentSubscriptionRef.current && typeof currentSubscriptionRef.current.unsubscribe === 'function') {
-      currentSubscriptionRef.current.unsubscribe();
-      console.log("[useFalImageGeneration] Fal subscription cancelled via unsubscribe().");
-    }
-    currentSubscriptionRef.current = null;
-    setIsGenerating(false);
-    setGenerationProgress(null);
-  }, []);
+  // Remove old cancelGeneration based on Fal subscription
+  // const cancelGeneration = useCallback(() => { ... }, []);
 
-  const generateImages = useCallback(async (params: FalImageGenerationParams): Promise<GeneratedImageWithMetadata[]> => {
-    console.log("[useFalImageGeneration] generateImages CALLED. Initializing generation process.");
-    setIsGenerating(true);
-    cancelGenerationRef.current = false;
-    currentSubscriptionRef.current = null;
-    const generatedImagesThisSession: GeneratedImageWithMetadata[] = []; // This will store all images for the current call
+  const createGenerationTask = useCallback(
+    async (params: FalImageGenerationParams, selectedProjectId: string): Promise<CreatedTaskInfo | null> => {
+      console.log("[useFalImageGeneration] createGenerationTask CALLED for API.");
+      if (!selectedProjectId) {
+        toast.error("No project selected. Cannot create task.");
+        return null;
+      }
+      if (!params.toolType) {
+        toast.error("Task type (toolType) not specified in params. Cannot create task.");
+        return null;
+      }
 
-    const {
-      prompts: submittedPrompts,
-      imagesPerPrompt,
-      falModelId = defaultFalModelId,
-      numInferenceSteps = 28,
-      enableSafetyChecker = false,
-      guidanceScale = 3.5,
-      realCfgScale = 3.5,
-      baseShift = 0.5,
-      maxShift = 1.15,
-      scheduler = "euler",
-      imageSize: rawImageSize, 
-      loras: lorasForApi = [],
-      controlnets: controlnetsForApi = [],
-      controlLoras: controlLorasForApi = [],
-      startingImageFile,
-      appliedStartingImageUrl,
-      fullSelectedLorasForMetadata = [],
-      depthStrength,
-      softEdgeStrength,
-      toolType = 'image-generation',
-      originalFrameTimestamp,
-      original_image_filename,
-      customMetadataFields,
-    } = params;
+      setIsCreatingTask(true);
+      let userImageUrl: string | null = params.appliedStartingImageUrl || null;
 
-    console.log(`[useFalImageGeneration_DEBUG] Received params in generateImages: toolType=${toolType}, original_image_filename=${original_image_filename}, originalFrameTimestamp=${originalFrameTimestamp}, customMetadataFields=${JSON.stringify(customMetadataFields)}`);
+      const {
+        // Destructure params as before, but exclude startingImageFile for the final taskDbParamsForApi
+        prompts: submittedPrompts,
+        imagesPerPrompt,
+        falModelId = defaultFalModelId,
+        numInferenceSteps = 28,
+        enableSafetyChecker = false,
+        guidanceScale = 3.5,
+        realCfgScale = 3.5,
+        baseShift = 0.5,
+        maxShift = 1.15,
+        scheduler = "euler",
+        imageSize: rawImageSize,
+        loras: lorasForApi = [],
+        controlnets: controlnetsFromParams = [],
+        controlLoras: controlLorasFromParams = [],
+        startingImageFile, // Keep for upload logic
+        depthStrength,
+        softEdgeStrength,
+        toolType, // This will be task_type for the API payload
+        originalFrameTimestamp,
+        original_image_filename,
+        customMetadataFields,
+      } = params;
 
-    const totalPrompts = submittedPrompts.length;
-    const totalOverallImages = totalPrompts * imagesPerPrompt;
-
-    setGenerationProgress({
-      currentPromptNum: 0, currentImageInPrompt: 0, totalPrompts, imagesPerPrompt,
-      currentOverallImageNum: 0, totalOverallImages
-    });
-
-    let overallSuccess = true;
-    let userImageUrl: string | null = null;
-
-    try {
-      if (startingImageFile) {
-        try {
-          userImageUrl = await uploadImageToStorage(startingImageFile);
-          if (userImageUrl) toast.success("Starting image uploaded successfully!");
-          else toast.error("Starting image upload failed, proceeding without it.");
-        } catch (uploadError) {
-          console.error("[useFalImageGeneration] Error uploading image:", uploadError);
-          toast.error("Failed to upload starting image, proceeding without it.");
+      try {
+        if (startingImageFile && !userImageUrl) {
+          toast.info("Uploading starting image for task...");
+          try {
+            userImageUrl = await uploadImageToStorage(startingImageFile);
+            if (userImageUrl) {
+              toast.success("Starting image uploaded successfully!");
+            } else {
+              toast.error("Starting image upload failed. Task creation via API might fail or proceed without it if allowed by worker.");
+            }
+          } catch (uploadError: any) {
+            console.error("[useFalImageGeneration] Error uploading starting image:", uploadError);
+            toast.error(`Failed to upload starting image: ${uploadError.message}`);
+            setIsCreatingTask(false);
+            return null;
+          }
         }
-      } else if (appliedStartingImageUrl) {
-        userImageUrl = appliedStartingImageUrl;
-        toast.info("Using previously uploaded starting image.");
-      }
-      
-      const finalControlImageUrl = userImageUrl || "https://v3.fal.media/files/elephant/P_38yEdy75SvJTJjPXnKS_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png";
-      const finalDepthControlImageUrl = userImageUrl || "https://v3.fal.media/files/lion/Xq7VLnpg89HEfHh_spBTN_XAAWPGSNVnof0tkgQ4A4p_5c7126c40ee24ee4a370964a512ddc34.png";
-
-      const finalControlnets = controlnetsForApi.map(cn => ({ ...cn, control_image_url: cn.control_image_url || finalControlImageUrl }));
-      const finalControlLoras = controlLorasForApi.map(cl => ({ ...cl, control_image_url: cl.control_image_url || finalDepthControlImageUrl }));
-
-      // Dynamically add controlnets and control_loras based on strengths
-      const activeControlnets: any[] = [...finalControlnets]; // Start with any predefined ones
-      const activeControlLoras: any[] = [...finalControlLoras]; // Start with any predefined ones
-
-      if (softEdgeStrength && softEdgeStrength > 0 && userImageUrl) {
-        activeControlnets.push({
-          path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
-          control_image_url: finalControlImageUrl,
-          conditioning_scale: softEdgeStrength,
-          // end_percentage: 0.8, // Optional: Fal default is 1.0
-        });
-        console.log(`[useFalImageGeneration] Added SoftEdge ControlNet with strength: ${softEdgeStrength}`);
-      }
-
-      if (depthStrength && depthStrength > 0 && userImageUrl) {
-        activeControlLoras.push({
-          path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
-          control_image_url: finalDepthControlImageUrl,
-          scale: depthStrength,
-          preprocess: "depth",
-        });
-        console.log(`[useFalImageGeneration] Added Depth ControlLoRA with strength: ${depthStrength}`);
-      }
-
-      const falCompatibleImageSize = mapAspectRatioToFalImageSize(rawImageSize);
-      console.log(`[useFalImageGeneration] Raw imageSize: "${rawImageSize}", Mapped to Fal image_size: "${falCompatibleImageSize}"`);
-
-      for (let i = 0; i < totalPrompts; i++) {
-        if (cancelGenerationRef.current) {
-          console.log(`[useFalImageGeneration] Loop iteration ${i + 1}/${totalPrompts}: Generation was cancelled. Breaking loop.`);
-          // Do not toast here, let the caller handle cancellation summary
-          overallSuccess = false;
-          break;
-        }
-        console.log(`[useFalImageGeneration] Starting processing for prompt ${i + 1}/${totalPrompts}. Text: "${submittedPrompts[i].fullPrompt.substring(0, 50)}..."`);
-        setGenerationProgress(prev => prev ? { ...prev, currentPromptNum: i, currentImageInPrompt: 0 } : null);
         
-        const currentPromptData = submittedPrompts[i];
-        const currentFullPrompt = currentPromptData.fullPrompt;
-        const promptDisplay = currentPromptData.shortPrompt || currentFullPrompt.substring(0, 30) + '...';
-        toast.info(`Starting prompt ${i + 1}/${totalPrompts}: "${promptDisplay}" for Flux`); // Indicate Flux
+        const finalControlnets = controlnetsFromParams.map(cn => ({ 
+            ...cn, 
+            control_image_url: cn.control_image_url || userImageUrl || ""
+        }));
+        const finalControlLoras = controlLorasFromParams.map(cl => ({ 
+            ...cl, 
+            control_image_url: cl.control_image_url || userImageUrl || ""
+        }));
+        
+        const activeControlnets: any[] = [...finalControlnets];
+        const activeControlLoras: any[] = [...finalControlLoras];
 
-        const falInput: Record<string, any> = {
-          prompt: currentFullPrompt,
-          num_inference_steps: numInferenceSteps,
-          num_images: imagesPerPrompt,
-          enable_safety_checker: enableSafetyChecker,
-          guidance_scale: guidanceScale,
-          real_cfg_scale: realCfgScale,
-          base_shift: baseShift,
-          max_shift: maxShift,
-          scheduler: scheduler,
-          image_size: falCompatibleImageSize, 
+        if (userImageUrl && softEdgeStrength && softEdgeStrength > 0) {
+            activeControlnets.push({
+                path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
+                control_image_url: userImageUrl,
+                conditioning_scale: softEdgeStrength,
+            });
+        }
+        if (userImageUrl && depthStrength && depthStrength > 0) {
+            activeControlLoras.push({
+                path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
+                control_image_url: userImageUrl, 
+                scale: depthStrength,
+                preprocess: "depth",
+            });
+        }
+
+        const falCompatibleImageSize = mapAspectRatioToFalImageSize(rawImageSize);
+
+        const taskDbParamsForApi: Omit<FalImageGenerationParams, 'startingImageFile' | 'appliedStartingImageUrl' | 'toolType'> & { 
+            input_image_url?: string | null;
+            controlnets?: any[]; 
+            control_loras?: any[];
+            image_size?: string | undefined; 
+        } = {
+          prompts: submittedPrompts,
+          imagesPerPrompt,
+          falModelId,
+          numInferenceSteps,
+          enableSafetyChecker,
+          guidanceScale,
+          realCfgScale,
+          baseShift,
+          maxShift,
+          scheduler,
+          image_size: falCompatibleImageSize,
           loras: lorasForApi,
-          controlnets: activeControlnets.length > 0 ? activeControlnets : undefined, 
-          control_loras: activeControlLoras.length > 0 ? activeControlLoras : undefined, 
+          controlnets: activeControlnets.length > 0 ? activeControlnets : undefined,
+          control_loras: activeControlLoras.length > 0 ? activeControlLoras : undefined,
+          input_image_url: userImageUrl,
+          depthStrength, 
+          softEdgeStrength, 
+          originalFrameTimestamp,
+          original_image_filename,
+          customMetadataFields,
         };
         
-        Object.keys(falInput).forEach(key => falInput[key] === undefined && delete falInput[key]);
+        Object.keys(taskDbParamsForApi).forEach(key => (taskDbParamsForApi as any)[key] === undefined && delete (taskDbParamsForApi as any)[key]);
 
-        try {
-          if (cancelGenerationRef.current) break;
+        const apiPayload = {
+            project_id: selectedProjectId,
+            task_type: toolType, // toolType from params is used as task_type for API
+            params: taskDbParamsForApi as unknown as Json,
+            status: 'Pending',
+        };
 
-          console.log(`[useFalImageGeneration] Subscribing to Fal for prompt ${i + 1}: "${promptDisplay}". Model: ${falModelId}. Full API input (excluding file data):`, JSON.parse(JSON.stringify({...falInput, prompt: 'REDACTED FOR LOG', control_image_url: 'REDACTED'})));
-          
-          const subscription = fal.subscribe(falModelId, {
-            input: falInput as any, // Type assertion if needed
-            logs: true,
-            onQueueUpdate: (update) => {
-              if (update.status === "IN_PROGRESS" && update.logs) {
-                update.logs.forEach(log => console.log(`[FAL_FLUX_LOG][${log.level}] ${log.message}`));
-              }
-              // Use type assertion to satisfy linter for broader status checks
-              const currentStatus = update.status as string;
-              if (currentStatus === "COMPLETED" || currentStatus === "ERROR" || currentStatus === "CANCELLED") {
-                console.log(`[useFalImageGeneration] Fal queue update for prompt ${i+1}: ${currentStatus}`);
-              }
-            },
-          });
-          currentSubscriptionRef.current = subscription;
+        toast.info(`Creating '${toolType}' task via API...`);
 
-          const result: any = await subscription;
-          currentSubscriptionRef.current = null;
+        const response = await fetch('/api/tasks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(apiPayload)
+        });
 
-          if (cancelGenerationRef.current && (!result || !result.data || !result.data.images)) {
-            console.log(`[useFalImageGeneration] Generation for prompt ${i+1} effectively cancelled post-API call.`);
-            continue; // Move to next prompt if cancelled
-          }
-
-          if (!result || !result.data || !result.data.images || !Array.isArray(result.data.images) || result.data.images.length === 0) {
-            if (!cancelGenerationRef.current) {
-              toast.error(`Fal API returned no images for prompt: "${promptDisplay}".`);
-            }
-            console.error(`[useFalImageGeneration] Fal API unexpected result for prompt ${i+1}:`, result);
-            overallSuccess = false;
-            continue; // Move to next prompt
-          }
-
-          const imagesFromApi = result.data.images;
-          const responseSeed = result.data.seed; 
-          let imagesProcessedForThisPrompt = 0;
-
-          for (let j = 0; j < imagesFromApi.length; j++) {
-              if (cancelGenerationRef.current) break;
-            
-            const image = imagesFromApi[j];
-            setGenerationProgress(prev => prev ? { ...prev, currentImageInPrompt: j, currentOverallImageNum: prev.currentOverallImageNum + 1 } : null);
-
-            const falImageUrl = image.url;
-            const imageContentType = image.content_type || 'image/jpeg';
-            let finalImageUrlForDbAndDisplay = falImageUrl;
-            let uploadedToSupabase = false;
-            let imageFileForUpload: File | null = null;
-            let filePath: string | null = null;
-
-            try {
-              console.log(`[useFalImageGeneration] Attempting to fetch image from Fal URL: ${falImageUrl}`);
-              const fetchResponse = await fetch(falImageUrl);
-              if (!fetchResponse.ok) {
-                throw new Error(`Failed to fetch image from Fal: ${fetchResponse.status} ${fetchResponse.statusText}`);
-              }
-              const imageBlob = await fetchResponse.blob();
-              const fileExtension = imageBlob.type.split('/')[1] || imageContentType.split('/')[1] || 'jpg';
-              const uniqueId = nanoid(12);
-              const fileName = `${toolType}_${uniqueId}_${(originalFrameTimestamp !== undefined ? `t${originalFrameTimestamp.toFixed(2)}_` : '')}${currentPromptData.id.substring(0,5)}.${fileExtension}`;
-              filePath = `public/${fileName}`;
-              imageFileForUpload = new File([imageBlob], fileName, { type: imageBlob.type });
-
-              console.log(`[useFalImageGeneration] Uploading ${fileName} to Supabase. Path: ${filePath}`);
-              const { data: uploadData, error: uploadError } = await supabase.storage
-                .from('image_uploads')
-                .upload(filePath, imageFileForUpload, { cacheControl: '3600', upsert: false });
-
-              if (uploadError) throw uploadError;
-
-              const { data: publicUrlData } = supabase.storage.from('image_uploads').getPublicUrl(filePath);
-              if (!publicUrlData || !publicUrlData.publicUrl) {
-                throw new Error('Could not get public URL for uploaded image from Supabase.');
-              }
-              finalImageUrlForDbAndDisplay = publicUrlData.publicUrl;
-              uploadedToSupabase = true;
-              console.log(`[useFalImageGeneration] Image successfully uploaded to Supabase: ${finalImageUrlForDbAndDisplay}`);
-            } catch (uploadError: any) {
-              console.error(`[useFalImageGeneration] Supabase upload failed for ${falImageUrl}:`, uploadError);
-              toast.error(`Storage failed for an image from prompt "${promptDisplay}": ${uploadError.message}. Using Fal URL.`);
-              // Continue with Fal URL for this image
-            }
-            
-            const metadataForDb: DisplayableMetadata = {
-              prompt: currentFullPrompt,
-              seed: typeof responseSeed === 'number' ? responseSeed : undefined,
-              width: image.width,
-              height: image.height,
-              content_type: uploadedToSupabase && imageFileForUpload ? imageFileForUpload.type : imageContentType,
-              tool_type: toolType, // Use passed toolType
-              original_image_filename: original_image_filename, // Use passed original_image_filename
-              ...(originalFrameTimestamp !== undefined && { original_frame_timestamp: originalFrameTimestamp }), // Use passed originalFrameTimestamp
-              ...(uploadedToSupabase && filePath && { supabase_storage_path: filePath }),
-              ...(fullSelectedLorasForMetadata && fullSelectedLorasForMetadata.length > 0 && { loras: fullSelectedLorasForMetadata }),
-              api_parameters: {
-                model_id: falModelId,
-                num_inference_steps: numInferenceSteps,
-                guidance_scale: guidanceScale,
-                scheduler: scheduler,
-                ...(rawImageSize && { image_size: rawImageSize }), // Use rawImageSize passed in params
-                ...(lorasForApi.length > 0 && { loras: lorasForApi.map(l => ({ path: l.path, scale: parseFloat(l.scale) })) }), // Ensure scale is number
-                ...(activeControlnets.length > 0 && { controlnets: activeControlnets }),
-                ...(activeControlLoras.length > 0 && { control_loras: activeControlLoras }),
-                ...(customMetadataFields || {}), // Spread custom fields
-                generation_mode: 'flux' // Explicitly set for Flux
-              }
-            };
-
-              try {
-                  const { data: dbData, error: dbError } = await supabase
-                      .from('generations')
-                .insert({
-                  image_url: finalImageUrlForDbAndDisplay,
-                  prompt: currentFullPrompt,
-                  seed: typeof responseSeed === 'number' ? (responseSeed % 2147483647) : null,
-                  user_id: (await supabase.auth.getUser()).data.user?.id,
-                  metadata: metadataForDb as Json,
-                })
-                      .select()
-                      .single();
-
-                  if (dbError) throw dbError;
-
-                  if (dbData) {
-                      const newImageEntry: GeneratedImageWithMetadata = { 
-                          id: dbData.id, 
-                  url: finalImageUrlForDbAndDisplay,
-                          prompt: currentFullPrompt, 
-                  seed: typeof responseSeed === 'number' ? responseSeed : undefined,
-                  metadata: metadataForDb,
-                  isVideo: metadataForDb.content_type?.startsWith('video/') || metadataForDb.tool_type === 'edit-travel-reconstructed-client'
-                };
-                generatedImagesThisSession.push(newImageEntry); // ADD to session batch
-                imagesProcessedForThisPrompt++;
-              }
-            } catch (dbError: any) {
-              console.error(`[useFalImageGeneration] DB save failed for an image from prompt "${promptDisplay}" (URL: ${finalImageUrlForDbAndDisplay}):`, dbError);
-              toast.error(`DB Save Error for an image from prompt "${promptDisplay}": ${dbError.message}.`);
-              overallSuccess = false; // Consider overallSuccess affected by DB errors
-            }
-          } // End loop over imagesFromApi
-
-          if (!cancelGenerationRef.current && imagesProcessedForThisPrompt > 0) {
-             toast.success(`${imagesProcessedForThisPrompt} Flux image(s) saved for prompt: "${promptDisplay}".`);
-          } else if (!cancelGenerationRef.current && imagesFromApi.length > 0 && imagesProcessedForThisPrompt === 0){
-             toast.warning(`Flux API returned images for prompt "${promptDisplay}", but all failed to save to DB.`);
-          }
-
-        } catch (error: any) {
-          if (!cancelGenerationRef.current) {
-            console.error(`[useFalImageGeneration] Fal API call failed for prompt ${i + 1} ("${promptDisplay}"):`, error);
-            toast.error(`Flux API call failed for prompt "${promptDisplay}": ${error.message || "API error"}`);
-          }
-          overallSuccess = false; // Mark overall success as false if any API call fails and wasn't cancelled
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: response.statusText }));
+            throw new Error(errorData.message || `HTTP error ${response.status}`);
         }
-      } // End loop over prompts
 
-    } catch (initializationError) { // Catch errors from starting image upload etc.
-        console.error("[useFalImageGeneration] Initialization error:", initializationError);
-        toast.error(`Generation setup failed: ${(initializationError as Error).message}`);
-        overallSuccess = false;
-    } finally {
-      setIsGenerating(false);
-      setGenerationProgress(null);
-      currentSubscriptionRef.current = null;
-      console.log(`[useFalImageGeneration] generateImages finished. Returning ${generatedImagesThisSession.length} images. Cancelled: ${cancelGenerationRef.current}`);
-    }
-    
-    // Do not toast overall success/failure/cancellation here. Let the caller do it based on the returned array and cancellation status.
-    return generatedImagesThisSession;
-  }, [cancelGeneration]);
+        const newTask = await response.json();
 
-  return { isGenerating, generationProgress, generateImages, cancelGeneration };
+        if (newTask && newTask.id) {
+          const taskIdStr = String(newTask.id);
+          console.log(`[useFalImageGeneration] Task created via API (type: ${toolType}):`, newTask);
+          toast.success(`Task '${toolType}' (ID: ${taskIdStr.substring(0,8)}) created successfully via API.`);
+          return { taskId: taskIdStr };
+        } else {
+          toast.error("Task creation via API returned no data or task ID.");
+          return null;
+        }
+
+      } catch (err: any) {
+        console.error(`[useFalImageGeneration] Exception during API task creation (type: ${params.toolType}):`, err);
+        toast.error(`An unexpected error occurred with API: ${err.message}`);
+        return null;
+      } finally {
+        setIsCreatingTask(false);
+      }
+    },
+    [] 
+  );
+
+  return {
+    isCreatingTask,
+    createGenerationTask,
+  };
 };
+
+// initializeGlobalFalClient is likely not needed anymore if this hook doesn't use fal directly
+// Or it should only be called if fal is used elsewhere. For now, let's assume it might be removed.
+// Comment it out for now.
+/*
+export const initializeGlobalFalClient = () => {
+  const API_KEY = localStorage.getItem('fal_api_key');
+  if (API_KEY) {
+    try {
+      fal.config({ credentials: API_KEY });
+      console.log("[FalClientConfig] Fal client configured globally (e.g., by useFalImageGeneration or EditTravel).");
+    } catch (e) {
+      console.error("[FalClientConfig] Error configuring Fal client globally:", e);
+    }
+  }
+  return API_KEY;
+};
+*/
+
+// If fal is not used in this file anymore, the import can be removed.
+// import { fal } from '@fal-ai/client'; // Check if still needed after all changes
 
 // Helper to initialize Fal client if it's not already configured
 // This should be called once, perhaps in your App.tsx or when the app loads.
@@ -436,7 +305,7 @@ export const initializeGlobalFalClient = () => {
   const API_KEY = localStorage.getItem('fal_api_key') || '0b6f1876-0aab-4b56-b821-b384b64768fa:121392c885a381f93de56d701e3d532f';
   if (API_KEY) {
     try {
-        fal.config({ credentials: API_KEY });
+        // fal.config({ credentials: API_KEY });
         console.log("[useFalImageGeneration] Fal client initialized with stored/default key.");
         falInitialized = true;
     } catch (e) {

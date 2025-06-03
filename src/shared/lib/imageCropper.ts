@@ -51,8 +51,8 @@ export const cropImageToClosestAspectRatio = async (
 
         let cropX = 0;
         let cropY = 0;
-        let cropWidth = originalWidth;
-        let cropHeight = originalHeight;
+        const cropWidth = originalWidth;
+        const cropHeight = originalHeight;
         let newCanvasWidth = originalWidth;
         let newCanvasHeight = originalHeight;
 

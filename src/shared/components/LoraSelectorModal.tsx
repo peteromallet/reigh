@@ -76,7 +76,7 @@ export const LoraSelectorModal: React.FC<LoraSelectorModalProps> = ({
       });
     }
 
-    let sorted = [...filtered];
+    const sorted = [...filtered];
     switch (sortOption) {
       case 'downloads':
         sorted.sort((a, b) => (b.Downloads || 0) - (a.Downloads || 0));

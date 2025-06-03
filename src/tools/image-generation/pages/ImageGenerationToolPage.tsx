@@ -9,7 +9,9 @@ import { Button } from "@/shared/components/ui/button";
 import ShotsPane from "@/shared/components/ShotsPane/ShotsPane";
 import { useListShots, useAddImageToShot } from "@/shared/hooks/useShots";
 import { useLastAffectedShot } from "@/shared/hooks/useLastAffectedShot";
-import { useFalImageGeneration, FalImageGenerationParams, initializeGlobalFalClient, FalGenerationProgress } from "@/shared/hooks/useFalImageGeneration";
+import { useProject } from "@/shared/contexts/ProjectContext";
+import { uploadImageToStorage } from '@/shared/lib/imageUploader';
+import { nanoid } from 'nanoid';
 
 // This interface defines the rich LoRA structure we expect from the form and want to save in metadata
 // interface StoredActiveLora { // This might be covered by MetadataLora or internal to the form/hook
@@ -51,20 +53,17 @@ const ImageGenerationToolPage = () => {
   // const currentSubscriptionRef = useRef<any>(null); // Handled by hook
   // const [generationProgress, setGenerationProgress] = useState<FalGenerationProgress | null>(null); // From hook
 
-  const { data: shots, isLoading: isLoadingShots, error: shotsError } = useListShots();
+  const { selectedProjectId } = useProject();
+  const { data: shots, isLoading: isLoadingShots, error: shotsError } = useListShots(selectedProjectId);
   const addImageToShotMutation = useAddImageToShot();
   const { lastAffectedShotId, setLastAffectedShotId } = useLastAffectedShot();
 
-  const { 
-    isGenerating,
-    generationProgress,
-    generateImages,
-    cancelGeneration 
-  } = useFalImageGeneration();
+  // Add state for task creation loading
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
 
   useEffect(() => {
     // Initialize Fal client globally
-    initializeGlobalFalClient(); 
+    // initializeGlobalFalClient(); // REMOVE - Function is obsolete
     const storedFalKey = localStorage.getItem('fal_api_key') || '0b6f1876-0aab-4b56-b821-b384b64768fa:121392c885a381f93de56d701e3d532f'; // Keep for local display/validation
     setFalApiKey(storedFalKey);
     const storedOpenaiKey = localStorage.getItem('openai_api_key') || "";
@@ -72,32 +71,51 @@ const ImageGenerationToolPage = () => {
     const storedReplicateKey = localStorage.getItem('replicate_api_key') || "";
     setReplicateApiKey(storedReplicateKey);
     fetchGeneratedImages();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProjectId]);
   
   const fetchGeneratedImages = async () => {
+    if (!selectedProjectId) {
+      // console.log("No project selected, skipping fetch of generated images."); // [VideoLoadSpeedIssue]
+      setGeneratedImages(placeholderImages); // Show placeholders if no project or clear
+      setShowPlaceholders(true);
+      return; 
+    }
     try {
+      // console.log(`[ImageGenerationToolPage] Fetching images for project: ${selectedProjectId}`); // [VideoLoadSpeedIssue]
       const { data, error } = await supabase
-        .from('generations')
-        .select('id, image_url, prompt, seed, metadata')
+        .from('generations' as any) // Cast to any to bypass strict table check
+        .select('id, image_url, prompt, seed, metadata, project_id') 
+        .eq('project_id', selectedProjectId) 
         .order('created_at', { ascending: false });
         
       if (error) { console.error('Error fetching images:', error); toast.error("Failed to load previously generated images."); return; }
       
       if (data && data.length > 0) {
-        const dbImages: GeneratedImageWithMetadata[] = data.map(record => {
+        // Cast data to any[] to bypass strict type checking during map
+        const dbImages: GeneratedImageWithMetadata[] = (data as any[]).map(record_any => {
+          const record = record_any as any;
           const metadata = (record.metadata || {}) as DisplayableMetadata;
           return {
-            id: record.id,
-            url: record.image_url,
-            prompt: record.prompt || metadata.prompt,
+            id: record.id as string, // Ensure id is string
+            url: record.image_url as string,
+            prompt: record.prompt as string || metadata.prompt,
             seed: typeof record.seed === 'number' ? record.seed : (typeof metadata.seed === 'number' ? metadata.seed : undefined),
             metadata: metadata, 
           };
         });
         setGeneratedImages(dbImages);
         setShowPlaceholders(false);
+      } else {
+        setGeneratedImages(placeholderImages); // Or an empty array if preferred when no images found
+        setShowPlaceholders(true);
       }
-    } catch (error) { console.error('Error fetching images:', error); toast.error("An error occurred while fetching images."); }
+    } catch (error) { 
+        console.error('Error fetching images:', error); // [VideoLoadSpeedIssue]
+        toast.error("An error occurred while fetching images."); 
+        setGeneratedImages(placeholderImages);
+        setShowPlaceholders(true);
+    }
   };
 
   const handleSaveApiKeys = (newFalApiKey: string, newOpenaiApiKey: string, newReplicateApiKey: string) => {
@@ -105,7 +123,7 @@ const ImageGenerationToolPage = () => {
     localStorage.setItem('openai_api_key', newOpenaiApiKey);
     localStorage.setItem('replicate_api_key', newReplicateApiKey);
     // Re-initialize Fal client with the new key
-    initializeGlobalFalClient(); // This will pick up the new key from localStorage
+    // initializeGlobalFalClient(); // REMOVE - Function is obsolete
     setFalApiKey(newFalApiKey);
     setOpenaiApiKey(newOpenaiApiKey);
     setReplicateApiKey(newReplicateApiKey);
@@ -115,7 +133,7 @@ const ImageGenerationToolPage = () => {
   const handleDeleteImage = async (id: string) => {
     setIsDeleting(id);
     try {
-      const { error } = await supabase.from('generations').delete().eq('id', id);
+      const { error } = await supabase.from('generations' as any).delete().eq('id', id);
       if (error) { toast.error("Failed to delete image: " + error.message); return; }
       setGeneratedImages(prevImages => prevImages.filter(image => image.id !== id));
       toast.success("Image deleted successfully");
@@ -165,7 +183,7 @@ const ImageGenerationToolPage = () => {
       };
 
       const { data: updatedData, error: updateError } = await supabase
-        .from('generations')
+        .from('generations' as any)
         .update({ 
           image_url: upscaledImageUrl, 
           metadata: newMetadata as Json 
@@ -200,58 +218,105 @@ const ImageGenerationToolPage = () => {
   };
 
   const handleNewGenerate = async (formData: any) => {
+    if (!selectedProjectId) {
+      toast.error("No project selected. Please select a project before generating images.");
+      return;
+    }
+
+    setIsCreatingTask(true);
+    toast.info("Preparing image generation task to be sent to API...");
+
     if (showPlaceholders && formData.prompts.length * formData.imagesPerPrompt > 0) {
-      setGeneratedImages([]);
+      setGeneratedImages([]); // Clear placeholders
       setShowPlaceholders(false);
     }
 
-    const params: FalImageGenerationParams = {
-      prompts: formData.prompts,
-      imagesPerPrompt: formData.imagesPerPrompt,
-      // Fal specific parameters from form (if they exist, otherwise hook defaults)
-      imageSize: formData.determinedApiImageSize, // Example: form might have 'determinedApiImageSize'
-      loras: formData.loras, // Assuming form provides this structure: {path: string, scale: string}[]
-      // ControlNet and LoRA parameters from form
-      // These need to be mapped carefully from your form structure
-      controlnets: [
-        {
-          path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
-          end_percentage: 0.5, // Example, adjust as needed
-          conditioning_scale: formData.softEdgeStrength, // Assuming form has softEdgeStrength
-          control_image_url: "", // Will be handled by hook logic (user image or default)
+    let userImageUrl: string | null = null;
+    if (formData.startingImage) {
+      try {
+        toast.info("Uploading starting image...");
+        userImageUrl = await uploadImageToStorage(formData.startingImage);
+        if (!userImageUrl) {
+          toast.error("Starting image upload failed. Please try again.");
+          setIsCreatingTask(false);
+          return;
         }
-      ],
-      controlLoras: [
-        {
-          path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
-          preprocess: "depth", // Example, adjust as needed
-          control_image_url: "", // Will be handled by hook logic
-          scale: formData.depthStrength?.toString(), // Assuming form has depthStrength
-        }
-      ],
-      startingImageFile: formData.startingImage, // Pass the File object if present
-      appliedStartingImageUrl: formData.appliedStartingImageUrl,
-      // Metadata related
-      fullSelectedLorasForMetadata: formData.fullSelectedLoras, // Pass through for metadata saving
-      depthStrength: formData.depthStrength,
-      softEdgeStrength: formData.softEdgeStrength,
-      toolType: 'image-generation',
-      // You might need to pass other Fal params if your form collects them directly
-      // e.g. numInferenceSteps, scheduler, etc. Otherwise, hook defaults are used.
+        toast.success("Starting image uploaded!");
+      } catch (uploadError: any) {
+        console.error("[ImageGenerationToolPage] Error uploading starting image:", uploadError);
+        toast.error(`Failed to upload starting image: ${uploadError.message || 'Unknown error'}`);
+        setIsCreatingTask(false);
+        return;
+      }
+    } else if (formData.appliedStartingImageUrl) {
+        userImageUrl = formData.appliedStartingImageUrl;
+    }
+
+    const taskParamsForApi = {
+        prompts: formData.prompts.map((p: PromptEntry) => ({ id: p.id, fullPrompt: p.fullPrompt, shortPrompt: p.shortPrompt })),
+        images_per_prompt: formData.imagesPerPrompt,
+        image_size: formData.determinedApiImageSize,
+        loras: formData.loras, 
+        controlnets: formData.softEdgeStrength && userImageUrl ? [ 
+          {
+            path: "https://huggingface.co/XLabs-AI/flux-controlnet-hed-v3/resolve/main/flux-hed-controlnet-v3.safetensors",
+            conditioning_scale: formData.softEdgeStrength, 
+            control_image_url: userImageUrl,
+          }
+        ] : undefined, // Use undefined if empty for cleaner JSON
+        control_loras: formData.depthStrength && userImageUrl ? [
+          {
+            path: "https://huggingface.co/black-forest-labs/FLUX.1-Depth-dev-lora/resolve/main/flux1-depth-dev-lora.safetensors",
+            preprocess: "depth", 
+            control_image_url: userImageUrl, 
+            scale: formData.depthStrength?.toString(), 
+          }
+        ] : undefined, // Use undefined if empty
+        starting_image_url: userImageUrl,
+        original_starting_image_filename: formData.startingImage ? formData.startingImage.name : (formData.appliedStartingImageUrl ? 'applied_image' : null),
+        full_selected_loras_for_metadata: formData.fullSelectedLoras,
+        depth_strength: formData.depthStrength,
+        soft_edge_strength: formData.softEdgeStrength,
+        // Fal specific parameters like fal_model_id, num_inference_steps can be added here from formData
+        // e.g. fal_model_id: formData.falModelId (if it exists on the form)
+    };
+
+    // Remove undefined keys from taskParamsForApi to keep payload clean
+    Object.keys(taskParamsForApi).forEach(key => (taskParamsForApi as any)[key] === undefined && delete (taskParamsForApi as any)[key]);
+
+    const apiPayload = {
+      project_id: selectedProjectId,
+      task_type: 'image_generation',
+      params: taskParamsForApi as Json, // Cast the inner params object to Json
+      status: 'Pending',
     };
 
     try {
-      const newImages = await generateImages(params);
-      if (newImages.length > 0) {
-        setGeneratedImages(prev => [...newImages, ...prev]);
+      const response = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(apiPayload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: response.statusText }));
+        throw new Error(errorData.message || `HTTP error ${response.status}`);
       }
-      // Toasts for overall success/partial failure are handled within the hook
-    } catch (error) {
-      // This catch is mostly a fallback, as the hook tries to handle errors and toast internally.
-      console.error("[ImageGenerationToolPage] Error calling generateImages from hook:", error);
-      if (!isGenerating) { // Avoid double toast if hook already showed one during cancellation
-        toast.error("An unexpected error occurred during image generation setup.");
+
+      const newTask = await response.json();
+
+      if (newTask && newTask.id) {
+        console.log('[ImageGenerationToolPage] Task created successfully via API:', newTask);
+        toast.success(`Image generation task created (ID: ${(newTask.id as string).substring(0,8)}...). It will be processed in the background.`);
+      } else {
+        console.warn("[ImageGenerationToolPage] Task creation via API didn't return data or ID.");
+        toast.info("Task creation registered via API but no confirmation ID received. Check logs.");
       }
+    } catch (error: any) {
+      console.error("[ImageGenerationToolPage] Exception creating task via API:", error);
+      toast.error(`An unexpected error occurred while creating the task via API: ${error.message || 'Unknown API error'}`);
+    } finally {
+      setIsCreatingTask(false);
     }
   };
 
@@ -296,12 +361,17 @@ const ImageGenerationToolPage = () => {
         toast.error("Image has no ID, cannot add to shot.");
         return false;
     }
+    if (!selectedProjectId) {
+        toast.error("No project selected. Cannot add image to shot.");
+        return false;
+    }
     try {
       await addImageToShotMutation.mutateAsync({
         shot_id: targetShotIdForButton,
         generation_id: generationId,
         imageUrl: imageUrl,
         thumbUrl: thumbUrl,
+        project_id: selectedProjectId, 
       });
       setLastAffectedShotId(targetShotIdForButton);
       return true;
@@ -314,6 +384,9 @@ const ImageGenerationToolPage = () => {
 
   const MemoizedShotsPane = React.memo(ShotsPane);
   const validShots = shots || [];
+
+  // Update the condition for showing the form, and disable generate button if task is being created
+  const canGenerate = hasValidFalApiKey && !isCreatingTask; // And selectedProjectId is implicitly checked in handleNewGenerate
 
   return (
     <div className="flex flex-col h-screen">
@@ -345,27 +418,20 @@ const ImageGenerationToolPage = () => {
             <ImageGenerationForm 
               ref={imageGenerationFormRef} 
               onGenerate={handleNewGenerate} // Use the new handler
-              isGenerating={isGenerating} // From hook
+              isGenerating={isCreatingTask} // isCreatingTask from handleNewGenerate
               hasApiKey={!!falApiKey} // Still relevant for UI
               apiKey={falApiKey} // Potentially for display or direct use by form
               openaiApiKey={openaiApiKey}
             />
           </div>
 
-          {isGenerating && generationProgress && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={(e) => { if (e.target === e.currentTarget) cancelGeneration(); }}>
+          {isCreatingTask && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={(e) => { if (e.target === e.currentTarget) { /* handleCancelGeneration() */ } }}>
               <div className="bg-background p-8 rounded-lg shadow-2xl w-full max-w-md text-center" onClick={(e) => e.stopPropagation()}>
-                <h2 className="text-2xl font-semibold mb-4">Generating Images...</h2>
-                <p className="mb-2">Prompt {generationProgress.currentPromptNum + 1} of {generationProgress.totalPrompts}</p>
-                <p className="mb-2">Image {generationProgress.currentImageInPrompt + 1} of {generationProgress.imagesPerPrompt} (for current prompt)</p>
-                <p className="mb-4">Overall progress: Image {generationProgress.currentOverallImageNum + 1} of {generationProgress.totalOverallImages}</p>
-                <div className="w-full bg-muted rounded-full h-2.5 mb-6">
-                  <div 
-                    className="bg-primary h-2.5 rounded-full transition-all duration-150 ease-linear" 
-                    style={{ width: `${(generationProgress.currentOverallImageNum / generationProgress.totalOverallImages) * 100}%` }}
-                  ></div>
-                </div>
-                <Button variant="destructive" onClick={cancelGeneration}>Cancel Generation</Button>
+                <h2 className="text-2xl font-semibold mb-4">Creating Image Generation Task...</h2>
+                <p className="mb-2">Task ID: {/* generationProgress?.taskId */}</p>
+                <p className="mb-4">Overall progress: {/* generationProgress?.progressPercentage */}%</p>
+                <Button variant="destructive" onClick={(e) => { if (e.target === e.currentTarget) { /* handleCancelGeneration() */ } }}>Cancel Task</Button>
               </div>
             </div>
           )}

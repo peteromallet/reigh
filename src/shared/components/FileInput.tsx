@@ -2,32 +2,34 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Input } from "@/shared/components/ui/input";
 import { Button } from "@/shared/components/ui/button";
 import { Label } from "@/shared/components/ui/label";
-import { X, UploadCloud, ImagePlus, VideoIcon } from "lucide-react";
+import { X, UploadCloud, ImagePlus, VideoIcon, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 interface FileInputProps {
-  onFileChange: (file: File | null) => void;
-  onFileRemove?: () => void; // Optional: if specific logic beyond clearing is needed
+  onFileChange: (files: File[]) => void;
+  onFileRemove?: () => void;
   acceptTypes?: ('image' | 'video')[];
   label?: string;
-  currentFilePreviewUrl?: string | null; // External preview URL (e.g., from a parent component)
-  currentFileName?: string | null; // External file name
+  currentFilePreviewUrl?: string | null;
+  currentFileName?: string | null;
   className?: string;
   disabled?: boolean;
+  multiple?: boolean;
 }
 
 const FileInput: React.FC<FileInputProps> = ({
   onFileChange,
   onFileRemove,
   acceptTypes = ['image'],
-  label = "Input File",
+  label = "Input File(s)",
   currentFilePreviewUrl,
   currentFileName,
   className = "",
   disabled = false,
+  multiple = false,
 }) => {
-  const [internalFile, setInternalFile] = useState<File | null>(null);
-  const [internalPreviewUrl, setInternalPreviewUrl] = useState<string | null>(null);
+  const [internalFiles, setInternalFiles] = useState<File[]>([]);
+  const [internalPreviewUrls, setInternalPreviewUrls] = useState<string[]>([]);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -35,63 +37,62 @@ const FileInput: React.FC<FileInputProps> = ({
     .map(type => (type === 'image' ? 'image/*' : 'video/*'))
     .join(',');
 
-  // Effect for managing internal preview URL based on internalFile
   useEffect(() => {
-    let objectUrl: string | null = null;
-    if (internalFile) {
-      objectUrl = URL.createObjectURL(internalFile);
-      setInternalPreviewUrl(objectUrl);
-    } else {
-      // No internal file, ensure any existing internal object URL is cleared and revoked
-      if (internalPreviewUrl && internalPreviewUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(internalPreviewUrl);
-      }
-      setInternalPreviewUrl(null);
-    }
+    internalPreviewUrls.forEach(url => URL.revokeObjectURL(url));
+    setInternalPreviewUrls([]);
 
+    if (internalFiles.length > 0) {
+      const newObjectUrls = internalFiles.map(file => URL.createObjectURL(file));
+      setInternalPreviewUrls(newObjectUrls);
+    }    
     return () => {
-      // This cleanup runs when internalFile changes (before the new effect runs)
-      // or when the component unmounts.
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
+      internalPreviewUrls.forEach(url => URL.revokeObjectURL(url));
     };
-  }, [internalFile]); // Only depends on internalFile
+  }, [internalFiles]);
 
-  const handleFileSelect = useCallback((file: File | null) => {
-    // Revoke previous internal URL *if it exists and belongs to a previous internalFile*
-    // This is now primarily handled by the useEffect cleanup when internalFile changes.
-    // However, if a file is selected rapidly, we might want to ensure the old one is gone.
-    if (internalPreviewUrl && internalPreviewUrl.startsWith('blob:')) {
-       // The useEffect tied to internalFile will handle this when internalFile is set/nulled
-       // setInternalPreviewUrl(null); // No longer explicitly null here, let useEffect do it
-    }
+  const handleFilesSelect = useCallback((fileList: FileList | null) => {
+    if (fileList && fileList.length > 0) {
+      const filesArray = Array.from(fileList);
+      const validFiles: File[] = [];
+      const invalidFiles: string[] = [];
 
-    if (file) {
-      const fileType = file.type.split('/')[0];
-      if (
-        (acceptTypes.includes('image') && fileType === 'image') ||
-        (acceptTypes.includes('video') && fileType === 'video')
-      ) {
-        setInternalFile(file); // This will trigger the useEffect to create/set internalPreviewUrl
-        onFileChange(file);
-      } else {
-        toast.error(`Invalid file type. Please upload ${acceptTypes.join(' or ')}.`);
-        setInternalFile(null); // This will trigger the useEffect to clear internalPreviewUrl
-        onFileChange(null);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
+      filesArray.forEach(file => {
+        const fileType = file.type.split('/')[0];
+        if (
+          (acceptTypes.includes('image') && fileType === 'image') ||
+          (acceptTypes.includes('video') && fileType === 'video')
+        ) {
+          validFiles.push(file);
+        } else {
+          invalidFiles.push(file.name);
         }
-      }
-    } else {
-      setInternalFile(null); // This will trigger the useEffect to clear internalPreviewUrl
-      onFileChange(null);
-    }
-  }, [acceptTypes, onFileChange]); // Removed internalPreviewUrl from deps as useEffect now manages it
+      });
 
-  const handleRemoveFile = useCallback(() => {
-    setInternalFile(null); // Triggers useEffect to clear internalPreviewUrl
-    onFileChange(null);
+      if (invalidFiles.length > 0) {
+        toast.error(`Invalid file type for: ${invalidFiles.join(', ')}. Accepted: ${acceptTypes.join(' or ')}.`);
+      }
+      
+      if (!multiple && validFiles.length > 1) {
+        toast.info("Multiple files selected, but only the first one will be used as 'multiple' is not enabled.");
+        setInternalFiles([validFiles[0]]);
+        onFileChange([validFiles[0]]);
+      } else {
+        setInternalFiles(validFiles);
+        onFileChange(validFiles);
+      }
+
+    } else {
+      setInternalFiles([]);
+      onFileChange([]);
+    }
+    if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+    }
+  }, [acceptTypes, onFileChange, multiple]);
+
+  const handleRemoveAllFiles = useCallback(() => {
+    setInternalFiles([]);
+    onFileChange([]);
     if (onFileRemove) {
       onFileRemove();
     }
@@ -101,7 +102,7 @@ const FileInput: React.FC<FileInputProps> = ({
   }, [onFileChange, onFileRemove]);
 
   const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    handleFileSelect(event.target.files ? event.target.files[0] : null);
+    handleFilesSelect(event.target.files);
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
@@ -121,24 +122,15 @@ const FileInput: React.FC<FileInputProps> = ({
     e.stopPropagation();
     setIsDraggingOver(false);
     if (!disabled && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFileSelect(e.dataTransfer.files[0]);
+      handleFilesSelect(e.dataTransfer.files);
       e.dataTransfer.clearData();
     }
   };
 
-  // Determine which preview and name to display
-  const displayPreviewUrl = internalFile ? internalPreviewUrl : currentFilePreviewUrl;
-  const displayFileName = internalFile ? internalFile.name : currentFileName;
-  
-  let displayFileType = internalFile?.type.split('/')[0];
-  if (!displayFileType && displayPreviewUrl) {
-    // Infer from URL if internalFile is not set (e.g. preview from localStorage)
-    if (displayPreviewUrl.startsWith('data:video') || displayPreviewUrl.includes('.mp4') || displayPreviewUrl.includes('.webm')) {
-        displayFileType = 'video';
-    } else if (displayPreviewUrl.startsWith('data:image') || displayPreviewUrl.includes('.jpg') || displayPreviewUrl.includes('.png') || displayPreviewUrl.includes('.jpeg') || displayPreviewUrl.includes('.gif') || displayPreviewUrl.includes('.webp') || displayPreviewUrl.startsWith('blob:http')) {
-        displayFileType = 'image';
-    }
-  }
+  const displayFiles = internalFiles.length > 0 ? internalFiles : 
+                       (currentFileName && currentFilePreviewUrl && !multiple ? [{name: currentFileName, type: currentFilePreviewUrl.startsWith('data:video') ? 'video/mp4' : 'image/png' } as File] : []);
+  const displayPreviewUrls = internalFiles.length > 0 ? internalPreviewUrls : 
+                             (currentFilePreviewUrl && !multiple ? [currentFilePreviewUrl] : []);
 
   return (
     <div className={`space-y-2 ${className}`}>
@@ -146,11 +138,11 @@ const FileInput: React.FC<FileInputProps> = ({
       <div
         className={`border-2 border-dashed rounded-md p-6 text-center
                     ${isDraggingOver ? 'border-primary bg-primary/10' : 'border-muted-foreground/30'}
-                    ${disabled ? 'cursor-not-allowed bg-muted/50' : 'cursor-pointer hover:border-muted-foreground/50'}`}
+                    ${(disabled || (internalFiles.length > 0 && !multiple)) ? 'cursor-not-allowed bg-muted/50' : 'cursor-pointer hover:border-muted-foreground/50'}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onClick={() => !disabled && fileInputRef.current?.click()}
+        onClick={() => !disabled && !(internalFiles.length > 0 && !multiple) && fileInputRef.current?.click()}
       >
         <Input
           id="file-input-element"
@@ -159,56 +151,65 @@ const FileInput: React.FC<FileInputProps> = ({
           accept={acceptedMimeTypes}
           onChange={handleInputChange}
           className="hidden"
-          disabled={disabled}
+          disabled={disabled || (internalFiles.length > 0 && !multiple && !onFileRemove)}
+          multiple={multiple}
         />
-        {!displayPreviewUrl && (
+        {displayFiles.length === 0 && (
           <div className="flex flex-col items-center space-y-2 text-muted-foreground">
             <UploadCloud className="h-10 w-10" />
-            <p>Drag & drop or click to upload</p>
+            <p>Drag & drop or click to upload {multiple ? 'files' : 'a file'}</p>
             <p className="text-xs">
               Accepted: {acceptTypes.join(', ')}
             </p>
           </div>
         )}
-        {displayPreviewUrl && (
-          <div className="relative group">
-            {displayFileType === 'image' ? (
-              <img
-                src={displayPreviewUrl}
-                alt={displayFileName || 'Preview'}
-                className="rounded-md max-h-48 w-auto mx-auto object-contain"
-              />
-            ) : displayFileType === 'video' ? (
-              <video
-                src={displayPreviewUrl}
-                controls
-                className="rounded-md max-h-48 w-auto mx-auto"
-              >
-                Your browser does not support the video tag.
-              </video>
-            ) : (
-               <div className="mt-2 border rounded-md p-2 h-32 flex items-center justify-center bg-muted max-w-xs mx-auto">
-                  {/* Fallback display if type is unknown but preview URL exists */}
-                  <p className="text-xs text-muted-foreground">Preview</p> 
+        {displayFiles.length > 0 && (
+          <div className="relative group space-y-2">
+            {displayFiles.length > 1 && (
+                <div className="text-sm text-muted-foreground p-2 border rounded-md bg-background">
+                    {displayFiles.length} files selected. First file: {displayFiles[0].name}
                 </div>
             )}
+            {displayFiles.length === 1 && displayPreviewUrls[0] && (
+                displayFiles[0].type.startsWith('image/') ? (
+                <img
+                    src={displayPreviewUrls[0]}
+                    alt={displayFiles[0].name || 'Preview'}
+                    className="rounded-md max-h-48 w-auto mx-auto object-contain"
+                />
+                ) : displayFiles[0].type.startsWith('video/') ? (
+                <video
+                    src={displayPreviewUrls[0]}
+                    controls
+                    className="rounded-md max-h-48 w-auto mx-auto"
+                >
+                    Your browser does not support the video tag.
+                </video>
+                ) : (
+                    <div className="mt-2 border rounded-md p-2 h-32 flex items-center justify-center bg-muted max-w-xs mx-auto">
+                        <FileText className="h-8 w-8 text-muted-foreground mr-2" />
+                        <p className="text-xs text-muted-foreground truncate">{displayFiles[0].name}</p> 
+                    </div>
+                )
+            )}
+            
             {!disabled && (
                 <Button
                 variant="destructive"
                 size="icon"
-                className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity h-7 w-7"
+                className="absolute top-1 right-1 opacity-70 group-hover:opacity-100 transition-opacity h-7 w-7"
                 onClick={(e) => {
-                    e.stopPropagation(); // Prevent click on dropzone
-                    handleRemoveFile();
+                    e.stopPropagation(); 
+                    handleRemoveAllFiles();
                 }}
-                aria-label="Remove file"
+                aria-label="Remove all files"
                 >
                 <X className="h-4 w-4" />
                 </Button>
             )}
-            {displayFileName && (
-              <p className="text-xs text-muted-foreground mt-1 truncate" title={displayFileName}>
-                {displayFileName}
+             {displayFiles.length === 1 && displayFiles[0].name && (
+              <p className="text-xs text-muted-foreground mt-1 truncate" title={displayFiles[0].name}>
+                {displayFiles[0].name}
               </p>
             )}
           </div>

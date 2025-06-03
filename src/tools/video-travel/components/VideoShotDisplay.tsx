@@ -1,23 +1,151 @@
-import React from 'react';
-import { Shot, GenerationRow } from '../../types/shots'; // Corrected import path
+import React, { useState, useEffect } from 'react';
+import { Shot, GenerationRow } from '../../../types/shots'; // Corrected import path
+import { useUpdateShotName, useDeleteShot } from '../../../shared/hooks/useShots'; // Import new hooks
+import { Input } from '@/shared/components/ui/input';
+import { Button } from '@/shared/components/ui/button';
+import { Pencil, Trash2, Check, X } from 'lucide-react'; // Icons
+import { toast } from 'sonner';
 
 interface VideoShotDisplayProps {
-  shot: Shot; 
+  shot: Shot;
   onSelectShot: (shotId: string) => void;
+  currentProjectId: string | null; // Needed for mutations
 }
 
-const VideoShotDisplay: React.FC<VideoShotDisplayProps> = ({ shot, onSelectShot }) => {
-  // Display max 5 images, or a placeholder if no images
+const VideoShotDisplay: React.FC<VideoShotDisplayProps> = ({ shot, onSelectShot, currentProjectId }) => {
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editableName, setEditableName] = useState(shot.name);
+
+  const updateShotNameMutation = useUpdateShotName();
+  const deleteShotMutation = useDeleteShot();
+
+  useEffect(() => {
+    setEditableName(shot.name); // Reset editable name if shot prop changes
+  }, [shot.name]);
+
+  const handleNameEditToggle = () => {
+    if (isEditingName) {
+      // If was editing and toggling off without saving via button, consider it a cancel
+      setEditableName(shot.name); // Reset to original name
+    }
+    setIsEditingName(!isEditingName);
+  };
+
+  const handleSaveName = async () => {
+    if (!currentProjectId) {
+      toast.error('Cannot update shot: Project ID is missing.');
+      return;
+    }
+    if (editableName.trim() === '') {
+      toast.error('Shot name cannot be empty.');
+      setEditableName(shot.name); // Reset to original if submitted empty
+      setIsEditingName(false);
+      return;
+    }
+    if (editableName.trim() === shot.name) {
+      setIsEditingName(false); // No change, just exit edit mode
+      return;
+    }
+
+    try {
+      await updateShotNameMutation.mutateAsync(
+        { shotId: shot.id, newName: editableName.trim(), projectId: currentProjectId }, // Pass projectId
+        {
+          onSuccess: () => {
+            toast.success(`Shot "${editableName.trim()}" updated.`);
+            // Optimistic update already handles UI, or rely on query invalidation
+          },
+          onError: (error) => {
+            toast.error(`Failed to update shot: ${error.message}`);
+            setEditableName(shot.name); // Revert on error
+          },
+        }
+      );
+    } finally {
+      setIsEditingName(false);
+    }
+  };
+
+  const handleDeleteShot = async () => {
+    if (!currentProjectId) {
+      toast.error('Cannot delete shot: Project ID is missing.');
+      return;
+    }
+    // Simple confirm, can be replaced with a nicer modal
+    if (window.confirm(`Are you sure you want to delete shot "${shot.name}"?`)) {
+      try {
+        await deleteShotMutation.mutateAsync(
+          { shotId: shot.id, projectId: currentProjectId }, // Pass projectId
+          {
+            onSuccess: () => {
+              toast.success(`Shot "${shot.name}" deleted.`);
+              // Optimistic update or query invalidation handles UI removal
+            },
+            onError: (error) => {
+              toast.error(`Failed to delete shot: ${error.message}`);
+            },
+          }
+        );
+      } catch (error) {
+        // This catch is likely redundant if mutation's onError is used, but good for safety
+        console.error("Error during deleteShotMutation call:", error);
+      }
+    }
+  };
+
   const imagesToShow: GenerationRow[] = shot.images?.slice(0, 5) || [];
 
   return (
     <div 
       key={shot.id} 
-      className="mb-6 p-4 border rounded-lg cursor-pointer hover:shadow-lg transition-shadow duration-200"
-      onClick={() => onSelectShot(shot.id)}
+      className="mb-6 p-4 border rounded-lg hover:shadow-lg transition-shadow duration-200 relative"
+      // onClick={() => onSelectShot(shot.id)} // Make the whole card clickable except controls
     >
-      <h3 className="text-xl font-medium mb-3">{shot.name}</h3>
-      <div className="flex space-x-2 overflow-x-auto pb-2">
+      <div className="flex justify-between items-start mb-3">
+        {isEditingName ? (
+          <div className="flex items-center gap-2 flex-grow">
+            <Input 
+              value={editableName}
+              onChange={(e) => setEditableName(e.target.value)}
+              onBlur={handleSaveName} // Save on blur
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveName();
+                if (e.key === 'Escape') {
+                  setEditableName(shot.name);
+                  setIsEditingName(false);
+                }
+              }}
+              className="text-xl font-medium h-9"
+              autoFocus
+            />
+            <Button variant="ghost" size="icon" onClick={handleSaveName} className="h-9 w-9">
+              <Check className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={handleNameEditToggle} className="h-9 w-9">
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        ) : (
+          <h3 
+            className="text-xl font-medium cursor-pointer hover:text-primary flex-grow mr-2"
+            onClick={() => onSelectShot(shot.id)} // Make name clickable to select shot
+          >
+            {shot.name}
+          </h3>
+        )}
+        <div className="flex items-center space-x-1 flex-shrink-0">
+          {!isEditingName && (
+             <Button variant="ghost" size="icon" onClick={handleNameEditToggle} className="h-8 w-8">
+                <Pencil className="h-4 w-4" />
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" onClick={handleDeleteShot} className="text-destructive hover:text-destructive-foreground hover:bg-destructive h-8 w-8">
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+      
+      <div className="flex space-x-2 overflow-x-auto pb-2 cursor-pointer" onClick={() => onSelectShot(shot.id)}>
         {imagesToShow.length > 0 ? (
           imagesToShow.map((image, index) => (
             <div key={image.shotImageEntryId || `img-${index}`} className="flex-shrink-0 w-32 h-32 rounded overflow-hidden border">

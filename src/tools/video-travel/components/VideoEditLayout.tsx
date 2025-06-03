@@ -1,13 +1,21 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/shared/components/ui/button";
 import { Slider } from "@/shared/components/ui/slider";
 import { Textarea } from "@/shared/components/ui/textarea";
-import { Input } from "@/shared/components/ui/input";
 import { Label } from "@/shared/components/ui/label";
-import { ScrollArea } from "@/shared/components/ui/scroll-area";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/components/ui/select";
-import { Shot, GenerationRow } from "@/types/shots"; // Adjusted path
+import { Shot, GenerationRow } from "@/types/shots";
+import { useProject } from "@/shared/contexts/ProjectContext";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import { Json } from "@/integrations/supabase/types";
+import FileInput from "@/shared/components/FileInput";
+import { uploadImageToStorage } from "@/shared/lib/imageUploader";
+import { useAddImageToShot, useRemoveImageFromShot, useUpdateShotImageOrder } from "@/shared/hooks/useShots";
+import {
+  arrayMove,
+} from '@dnd-kit/sortable';
+import ShotImageManager from '@/shared/components/ShotImageManager';
 
 // Interface for individual video pair configuration (copied from Index.tsx)
 export interface VideoPairConfig {
@@ -22,11 +30,14 @@ export interface VideoPairConfig {
 
 interface VideoEditLayoutProps {
   selectedShot: Shot;
+  projectId: string | null;
   videoPairConfigs: VideoPairConfig[];
   videoControlMode: 'individual' | 'batch';
   batchVideoPrompt: string;
   batchVideoFrames: number;
   batchVideoContext: number;
+  orderedShotImages: GenerationRow[];
+  onShotImagesUpdate: () => void;
   onBack: () => void;
   onVideoControlModeChange: (mode: 'individual' | 'batch') => void;
   onPairConfigChange: (pairId: string, field: keyof Omit<VideoPairConfig, 'imageA' | 'imageB' | 'id' | 'generatedVideoUrl'>, value: string | number) => void;
@@ -38,11 +49,14 @@ interface VideoEditLayoutProps {
 
 const VideoEditLayout: React.FC<VideoEditLayoutProps> = ({
   selectedShot,
+  projectId,
   videoPairConfigs,
   videoControlMode,
   batchVideoPrompt,
   batchVideoFrames,
   batchVideoContext,
+  orderedShotImages,
+  onShotImagesUpdate,
   onBack,
   onVideoControlModeChange,
   onPairConfigChange,
@@ -50,16 +64,307 @@ const VideoEditLayout: React.FC<VideoEditLayoutProps> = ({
   onBatchVideoFramesChange,
   onBatchVideoContextChange,
 }) => {
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
+  const [creatingTaskId, setCreatingTaskId] = useState<string | null>(null);
+  const { selectedProjectId } = useProject();
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const addImageToShotMutation = useAddImageToShot();
+  const removeImageFromShotMutation = useRemoveImageFromShot();
+  const updateShotImageOrderMutation = useUpdateShotImageOrder();
+  const [fileInputKey, setFileInputKey] = useState<number>(Date.now());
+
+  const [managedImages, setManagedImages] = useState<GenerationRow[]>([]);
+
+  useEffect(() => {
+    setManagedImages(orderedShotImages || []);
+  }, [orderedShotImages]);
+
   if (!selectedShot) {
-    // This case should ideally be handled by the parent, but as a fallback:
-    return <p>No shot selected for video editing.</p>;
+    return <p>Error: No shot selected. Please go back and select a shot.</p>;
   }
+
+  const handleImageUploadToShot = async (files: File[]) => {
+    if (!files || files.length === 0) return;
+    if (!projectId) {
+      toast.error("Project ID is missing. Cannot upload image(s).");
+      return;
+    }
+    if (!selectedShot || !selectedShot.id) {
+      toast.error("Selected shot is invalid. Cannot upload image(s).");
+      return;
+    }
+
+    setIsUploadingImage(true);
+    toast.info(`Uploading ${files.length} image(s)...`);
+
+    let successfulUploads = 0;
+    let failedUploads = 0;
+    
+    for (const file of files) {
+      try {
+        const imageUrl = await uploadImageToStorage(file);
+        if (!imageUrl) {
+          toast.error(`Upload failed for ${file.name}.`);
+          failedUploads++;
+          continue; 
+        }
+
+        const generationPrompt = `Uploaded image: ${file.name}`;
+        const generationResponse = await fetch('/api/generations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageUrl: imageUrl,
+            fileName: file.name,
+            fileType: file.type,
+            fileSize: file.size,
+            projectId: projectId,
+            prompt: generationPrompt,
+          }),
+        });
+
+        if (!generationResponse.ok) {
+          const errorData = await generationResponse.json().catch(() => ({ message: generationResponse.statusText }));
+          toast.error(`Failed to create generation record for ${file.name}: ${errorData.message}`);
+          failedUploads++;
+          continue;
+        }
+        const newGeneration = await generationResponse.json();
+
+        await addImageToShotMutation.mutateAsync({
+          shot_id: selectedShot.id,
+          generation_id: newGeneration.id,
+          project_id: projectId,
+          imageUrl: newGeneration.location, // Assuming newGeneration has location
+          thumbUrl: newGeneration.location, // Assuming newGeneration has location
+        });
+        successfulUploads++;
+      } catch (error: any) {
+        console.error(`[VideoEditLayout] Error processing file ${file.name}:`, error);
+        toast.error(`Failed to process ${file.name}: ${error.message}`);
+        failedUploads++;
+      }
+    }
+
+    setIsUploadingImage(false);
+    if (successfulUploads > 0) {
+      toast.success(`${successfulUploads} image(s) added to shot "${selectedShot.name}" successfully!`);
+    }
+    if (failedUploads > 0) {
+      toast.warning(`${failedUploads} image(s) could not be added.`);
+    }
+    if (successfulUploads === 0 && failedUploads === 0 && files.length > 0) {
+        toast.info("No images were processed. Please check the files or try again.");
+    }
+    setFileInputKey(Date.now()); 
+    if (successfulUploads > 0 || failedUploads > 0) { // Only refetch if something changed
+        onShotImagesUpdate(); 
+    }
+  };
+
+  const handleDeleteImageFromShot = async (generationId: string) => {
+    if (!selectedProjectId || !selectedShot || !selectedShot.id) {
+      toast.error("Cannot delete image: Project or Shot ID is missing.");
+      return;
+    }
+    removeImageFromShotMutation.mutate({
+      shot_id: selectedShot.id,
+      generation_id: generationId,
+      project_id: selectedProjectId
+    }, {
+      onSuccess: () => {
+        onShotImagesUpdate(); 
+        // Success toast is handled by the hook
+      },
+      onError: (error) => {
+        // Error toast is handled by the hook
+        console.error("[VideoEditLayout] Failed to remove image:", error);
+      }
+    });
+  };
+
+  const handleReorderImagesInShot = (activeId: string, overId: string) => {
+    const oldIndex = managedImages.findIndex((img) => img.id === activeId);
+    const newIndex = managedImages.findIndex((img) => img.id === overId);
+    
+    if (oldIndex === -1 || newIndex === -1) {
+        console.error("[VideoEditLayout] Dragged item not found in managed images.");
+        toast.error("Error reordering images. Item not found.");
+        return;
+    }
+
+    const newOrder = arrayMove(managedImages, oldIndex, newIndex);
+    setManagedImages(newOrder); // Optimistically update local UI
+
+    if (!selectedProjectId || !selectedShot || !selectedShot.id) {
+      toast.error("Cannot reorder images: Project or Shot ID is missing.");
+      setManagedImages(orderedShotImages || []); // Revert to prop order on error
+      return;
+    }
+
+    const orderedGenerationIds = newOrder.map(img => img.id);
+    updateShotImageOrderMutation.mutate({
+      shotId: selectedShot.id,
+      orderedGenerationIds,
+      projectId: selectedProjectId
+    }, {
+      onSuccess: () => {
+        onShotImagesUpdate();
+        // Success toast handled by hook
+      },
+      onError: (error) => {
+        console.error("[VideoEditLayout] Failed to reorder images:", error);
+        setManagedImages(orderedShotImages || []); // Revert to prop order on error
+        // Error toast handled by hook
+      }
+    });
+  };
+
+  const handleGenerateVideo = async (pairConfig: VideoPairConfig) => {
+    if (!projectId) { 
+      toast.error("No project selected. Please select a project first.");
+      return;
+    }
+    if (!pairConfig.imageA?.imageUrl || !pairConfig.imageB?.imageUrl) {
+      toast.error("Image A or Image B is missing for this pair.");
+      return;
+    }
+
+    setIsCreatingTask(true);
+    setCreatingTaskId(pairConfig.id);
+    toast.info(`Creating video task for segment ${pairConfig.imageA.id.substring(0,4)}... to ${pairConfig.imageB.id.substring(0,4)}...`);
+
+    const taskApiParams = {
+      image_a_url: pairConfig.imageA.imageUrl,
+      image_b_url: pairConfig.imageB.imageUrl,
+      prompt: pairConfig.prompt,
+      frames: pairConfig.frames,
+      context: pairConfig.context,
+      shot_id: selectedShot.id,
+    };
+
+    try {
+      const response = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: projectId, 
+          task_type: 'video_travel_segment',
+          params: taskApiParams as Json, 
+          status: 'Pending',
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: response.statusText }));
+        throw new Error(errorData.message || `HTTP error ${response.status}`);
+      }
+      
+      const newTask = await response.json(); 
+
+      if (newTask && newTask.id) {
+        console.log("[VideoEditLayout] Video task created via API:", newTask);
+        toast.success(`Video task created (ID: ${(newTask.id as string).substring(0,8)}...).`);
+      } else {
+        console.warn("[VideoEditLayout] Video task creation via API did not return ID or data.");
+        toast.info("Video task creation registered, but no confirmation ID received from API.");
+      }
+    } catch (err: any) {
+      console.error("[VideoEditLayout] Error creating video task via API:", err);
+      toast.error(`An unexpected error occurred: ${err.message || 'Unknown API error'}`);
+    } finally {
+      setIsCreatingTask(false);
+      setCreatingTaskId(null);
+    }
+  };
+
+  const handleGenerateAllVideos = async () => {
+    if (!projectId) {
+      toast.error("No project selected. Please select a project first.");
+      return;
+    }
+    if (videoPairConfigs.length === 0) {
+      toast.info("No video segments configured to generate.");
+      return;
+    }
+
+    setIsCreatingTask(true);
+    setCreatingTaskId('batch');
+    toast.info(`Creating ${videoPairConfigs.length} video tasks in batch via API...`);
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const pairConfig of videoPairConfigs) {
+      if (!pairConfig.imageA?.imageUrl || !pairConfig.imageB?.imageUrl) {
+        toast.error(`Skipping segment: Image A or Image B is missing for pair starting with ${pairConfig.imageA?.id?.substring(0,4) || 'N/A'}.`);
+        errorCount++;
+        continue;
+      }
+      
+      const taskApiParams = {
+        image_a_url: pairConfig.imageA.imageUrl,
+        image_b_url: pairConfig.imageB.imageUrl,
+        prompt: videoControlMode === 'batch' ? batchVideoPrompt : pairConfig.prompt,
+        frames: videoControlMode === 'batch' ? batchVideoFrames : pairConfig.frames,
+        context: videoControlMode === 'batch' ? batchVideoContext : pairConfig.context,
+        shot_id: selectedShot.id,
+      };
+
+      try {
+        const response = await fetch('/api/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: projectId,
+            task_type: 'video_travel_segment',
+            params: taskApiParams as Json,
+            status: 'Pending',
+          })
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ message: response.statusText }));
+          console.error(`[VideoEditLayout] API Error for batch task ${pairConfig.id}:`, errorData.message || response.statusText);
+          toast.error(`API Error for pair ${pairConfig.id.substring(0,4)}...: ${(errorData.message || response.statusText).substring(0,30)}...`);
+          errorCount++;
+          continue; 
+        }
+        
+        const newTask = await response.json();
+
+        if (newTask && newTask.id) {
+          successCount++;
+        } else {
+            errorCount++;
+            toast.info(`Task for pair ${pairConfig.id.substring(0,4)}... registered via API, no ID returned.`);
+        }
+      } catch (err: any) {
+        console.error(`[VideoEditLayout] Exception creating batch video task for pair ${pairConfig.id} via API:`, err);
+        toast.error(`API Exception for pair ${pairConfig.id.substring(0,4)}...: ${err.message.substring(0,30)}...`);
+        errorCount++;
+      }
+    }
+
+    if (successCount > 0) {
+      toast.success(`${successCount} video tasks created successfully via API.`);
+    }
+    if (errorCount > 0) {
+      toast.warning(`${errorCount} video tasks failed or had API issues.`);
+    }
+    if (successCount === 0 && errorCount === 0 && videoPairConfigs.length > 0) {
+        toast.info("Batch generation attempted via API but no tasks were processed (check config).");
+    }
+
+    setIsCreatingTask(false);
+    setCreatingTaskId(null);
+  };
 
   return (
     <div className="container mx-auto p-4">
       <Button onClick={onBack} className="mb-6">Back to Video Shots List</Button>
       <h2 className="text-3xl font-bold mb-1">Video Edit: {selectedShot.name}</h2>
-      <p className="text-muted-foreground mb-3">Configure and generate video segments for image pairs.</p>
+      <p className="text-muted-foreground mb-6">Configure and generate video segments, or add new images to this shot.</p>
       
       <div className="mb-6 flex items-center space-x-2">
         <Label className="text-sm font-medium">Control Mode:</Label>
@@ -80,12 +385,10 @@ const VideoEditLayout: React.FC<VideoEditLayoutProps> = ({
       </div>
 
       {videoControlMode === 'individual' && videoPairConfigs.length > 0 && (
-        <div className="space-y-8">
+        <div className="space-y-8 mb-8">
           {videoPairConfigs.map((pairConfig, index) => (
             <div key={pairConfig.id} className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4 p-4 border rounded-lg items-start bg-card shadow-md">
-              {/* Column 1: Image Pair */}
               <div className="flex flex-col space-y-2 md:flex-row md:space-x-3 md:space-y-0">
-                {/* Image A Block */}
                 <div className="flex-1 flex flex-col space-y-1">
                   <Label className="text-xs font-medium text-muted-foreground self-start">Image A</Label>
                   <div className="w-full h-36 bg-muted/50 rounded border flex items-center justify-center p-1 overflow-hidden">
@@ -96,7 +399,6 @@ const VideoEditLayout: React.FC<VideoEditLayoutProps> = ({
                     />
                   </div>
                 </div>
-                {/* Image B Block */}
                 <div className="flex-1 flex flex-col space-y-1">
                   <Label className="text-xs font-medium text-muted-foreground self-start">Image B</Label>
                   <div className="w-full h-36 bg-muted/50 rounded border flex items-center justify-center p-1 overflow-hidden">
@@ -108,7 +410,6 @@ const VideoEditLayout: React.FC<VideoEditLayoutProps> = ({
                   </div>
                 </div>
               </div>
-              {/* Column 2: Settings for this pair */}
               <div className="space-y-4 pt-1 md:pt-0">
                 <div>
                   <Label htmlFor={`prompt-${pairConfig.id}`} className="text-sm font-medium block mb-1.5">Prompt</Label>
@@ -146,7 +447,6 @@ const VideoEditLayout: React.FC<VideoEditLayoutProps> = ({
                   </div>
                 </div>
               </div>
-              {/* Column 3: Video Output & Generate Button */}
               <div className="flex flex-col space-y-2 items-center pt-2 md:pt-0">
                 <Label className="text-xs font-medium text-muted-foreground self-center">Video Preview</Label>
                 <div className="w-full aspect-video bg-muted/50 rounded border flex items-center justify-center overflow-hidden">
@@ -156,7 +456,14 @@ const VideoEditLayout: React.FC<VideoEditLayoutProps> = ({
                     <p className="text-xs text-muted-foreground text-center p-2">Video output will appear here</p>
                   )}
                 </div>
-                <Button size="sm" className="w-full mt-1" disabled>Generate Video</Button>
+                <Button 
+                  size="sm" 
+                  className="w-full mt-1" 
+                  onClick={() => handleGenerateVideo(pairConfig)} 
+                  disabled={isCreatingTask && creatingTaskId === pairConfig.id}
+                >
+                  {(isCreatingTask && creatingTaskId === pairConfig.id) ? 'Creating Task...' : 'Generate Video'}
+                </Button>
               </div>
             </div>
           ))}
@@ -164,8 +471,7 @@ const VideoEditLayout: React.FC<VideoEditLayoutProps> = ({
       )}
 
       {videoControlMode === 'batch' && videoPairConfigs.length > 0 && (
-        <div className="space-y-6">
-          {/* Batch Settings Controls */}
+        <div className="space-y-6 mb-8">
           <div className="p-4 border rounded-lg bg-card shadow-md space-y-4">
             <h3 className="text-lg font-semibold">Batch Generation Settings</h3>
             <div>
@@ -205,30 +511,56 @@ const VideoEditLayout: React.FC<VideoEditLayoutProps> = ({
             </div>
           </div>
 
-          {/* Image Gallery for Batch Mode - displays unique images from pairs */}
-          <div className="p-4 border rounded-lg bg-card shadow-md">
-            <h3 className="text-lg font-semibold mb-3">Image Sequence for Batch</h3>
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-              {[...new Map(videoPairConfigs.flatMap(p => [p.imageA, p.imageB]).map(img => [img.shotImageEntryId, img])).values()].map((image, idx) => (
-                <div key={image.shotImageEntryId || `batch-img-${idx}`} className="aspect-square bg-muted/50 rounded border flex items-center justify-center p-1 overflow-hidden">
-                  <img 
-                    src={image.thumbUrl || image.imageUrl || '/placeholder.svg'}
-                    alt={`Batch sequence image ${idx + 1}`}
-                    className="max-w-full max-h-full object-contain rounded-sm"
-                    title={`Image ID: ${image.id}`}
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Manage Images in "{selectedShot.name}"</CardTitle>
+              <p className="text-sm text-muted-foreground pt-1">
+                Drag to reorder images. Reordering will affect video segment pairs. 
+                {managedImages.length < 2 ? "Add at least two images to create video segments." : ""}
+              </p>
+            </CardHeader>
+            <CardContent>
+              <ShotImageManager
+                images={managedImages}
+                onImageDelete={handleDeleteImageFromShot}
+                onImageReorder={handleReorderImagesInShot}
+              />
+              {managedImages.length === 0 && (
+                 <p className="text-sm text-muted-foreground mt-4">No images in this shot yet. Upload images using the form below.</p>
+              )}
+            </CardContent>
+          </Card>
           
-          <Button size="lg" className="w-full" disabled>Generate All Videos (Batch)</Button>
+          <Button size="lg" className="w-full" onClick={handleGenerateAllVideos} disabled={isCreatingTask && creatingTaskId === 'batch'}>
+            {(isCreatingTask && creatingTaskId === 'batch') ? 'Creating Tasks...' : 'Generate All Videos (Batch)'}
+          </Button>
         </div>
       )}
 
-      {videoPairConfigs.length === 0 && (
-        <p>No image pairs to configure. This shot might have less than one image, or an error occurred.</p>
+      {videoPairConfigs.length === 0 && videoControlMode !== 'batch' && (
+        <p className="mb-8">No image pairs to configure for individual mode. This shot might have less than two images. Add images below.</p>
       )}
+       {videoPairConfigs.length === 0 && videoControlMode === 'batch' && (
+        <p className="mb-8">No image pairs to configure for batch mode. This shot might have less than two images. Add more images below.</p>
+      )}
+
+      <Card className="mt-8">
+        <CardHeader>
+          <CardTitle>Add New Image(s) to "{selectedShot.name}"</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <FileInput
+            key={fileInputKey}
+            onFileChange={handleImageUploadToShot}
+            acceptTypes={['image']}
+            label="Upload Image(s)"
+            disabled={isUploadingImage}
+            multiple
+          />
+          {isUploadingImage && <p className="text-sm text-primary mt-2">Uploading and processing image(s)...</p>}
+        </CardContent>
+      </Card>
+
     </div>
   );
 };

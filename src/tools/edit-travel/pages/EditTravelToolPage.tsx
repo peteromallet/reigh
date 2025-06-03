@@ -8,7 +8,6 @@ import ImageGallery, { GeneratedImageWithMetadata, DisplayableMetadata } from "@
 import SettingsModal from "@/shared/components/SettingsModal";
 import { PromptEntry } from "@/tools/image-generation/components/ImageGenerationForm";
 import PromptEditorModal from "@/shared/components/PromptEditorModal";
-import { fal } from "@fal-ai/client";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Json } from "@/integrations/supabase/types";
@@ -25,6 +24,8 @@ import { RadioGroup, RadioGroupItem } from "@/shared/components/ui/radio-group";
 import { useFalImageGeneration, FalImageGenerationParams, initializeGlobalFalClient as initializeHookFalClient } from "@/shared/hooks/useFalImageGeneration";
 import { Slider } from "@/shared/components/ui/slider";
 import { saveReconstructedVideo, reconstructVideoClientSide, extractAudio } from "@/shared/lib/videoReconstructionUtils"; // <-- MODIFIED IMPORT
+import { useProject } from "@/shared/contexts/ProjectContext"; // Import useProject
+import { uploadImageToStorage } from '@/shared/lib/imageUploader'; // For input file
 
 // Helper function for aspect ratio calculation
 const gcd = (a: number, b: number): number => {
@@ -32,19 +33,6 @@ const gcd = (a: number, b: number): number => {
     return a;
   }
   return gcd(b, a % b);
-};
-
-const initializeFalClientKontext = () => {
-  const API_KEY = localStorage.getItem('fal_api_key');
-  if (API_KEY) {
-    try {
-        fal.config({ credentials: API_KEY });
-        console.log("[EditTravelToolPage_KontextFal] Fal client configured for Kontext mode.");
-    } catch (e) {
-        console.error("[EditTravelToolPage_KontextFal] Error configuring Fal client for Kontext:", e);
-    }
-  }
-  return API_KEY;
 };
 
 const EDIT_TRAVEL_INPUT_FILE_KEY = 'editTravelInputFile';
@@ -102,20 +90,27 @@ const EditTravelToolPage = () => {
   const kontextCancelGenerationRef = useRef(false);
   const kontextCurrentSubscriptionRef = useRef<any>(null);
   const reconstructionCancelRef = useRef(false); // <-- ADDED REF
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
+  const { selectedProjectId } = useProject(); // Get selected project ID
 
-  const { data: shots, isLoading: isLoadingShots, error: shotsError } = useListShots();
+  const { data: shots, isLoading: isLoadingShots, error: shotsError } = useListShots(selectedProjectId);
   const addImageToShotMutation = useAddImageToShot();
   const { lastAffectedShotId, setLastAffectedShotId } = useLastAffectedShot();
 
   const generatePromptId = useCallback(() => nanoid(), []);
 
-  const { 
-    isGenerating: isFluxGenerating, 
-    generateImages: generateFluxImages, 
-    cancelGeneration: cancelFluxGeneration 
-  } = useFalImageGeneration();
+  // Remove usage of useFalImageGeneration for the primary flow, as handleGenerate now creates tasks directly.
+  // const { 
+  //   isGenerating: isFluxGenerating, 
+  //   generateImages: generateFluxImages, 
+  //   cancelGeneration: cancelFluxGeneration 
+  // } = useFalImageGeneration();
 
-  const isOverallGenerating = isKontextGenerating || isFluxGenerating;
+  // isOverallGenerating should now rely on isCreatingTask (for kontext-like behavior) or a similar state for flux if needed.
+  // For simplicity, we can assume isCreatingTask now covers both when handleGenerate is active.
+  // const isOverallGenerating = isKontextGenerating || isFluxGenerating;
+  const isOverallGenerating = isCreatingTask; // Simplified: handleGenerate sets isCreatingTask
+  // isKontextGenerating might also be replaced by isCreatingTask if appropriate
 
   const lorasForFlux = [
     { path: "Shakker-Labs/FLUX.1-dev-LoRA-add-details", scale: "0.78" },
@@ -125,12 +120,12 @@ const EditTravelToolPage = () => {
   ];
 
   useEffect(() => {
-    const key = initializeFalClientKontext();
-    initializeHookFalClient();
-    setFalApiKey(key);
+    const localFalApiKey = localStorage.getItem('fal_api_key');
+    setFalApiKey(localFalApiKey);
+    // initializeHookFalClient(); // REMOVE - Hook no longer uses/needs this global FAL client init
     const storedOpenaiKey = localStorage.getItem('openai_api_key') || "";
     setOpenaiApiKey(storedOpenaiKey);
-    fetchGeneratedEdits(); 
+    fetchGeneratedEdits(); // This will be updated
 
     // Load input file
     const savedFileRaw = localStorage.getItem(EDIT_TRAVEL_INPUT_FILE_KEY);
@@ -205,7 +200,7 @@ const EditTravelToolPage = () => {
     }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedProjectId]); // Add selectedProjectId to re-fetch edits when project changes
 
   useEffect(() => {
     let previewObjectUrl: string | null = null;
@@ -277,47 +272,67 @@ const EditTravelToolPage = () => {
   }, [inputFile]);
 
   const fetchGeneratedEdits = async () => {
+    if (!selectedProjectId) {
+      // console.log("[EditTravelToolPage] No project selected, skipping fetch of generated edits."); // [VideoLoadSpeedIssue]
+      setGeneratedImages([]); // Clear or set to placeholders
+      setShowPlaceholders(true);
+      return;
+    }
+    // console.log(`[EditTravelToolPage] Fetching edits for project: ${selectedProjectId}`); // [VideoLoadSpeedIssue]
     try {
       const { data, error } = await supabase
-        .from('generations')
-        .select('id, image_url, prompt, seed, metadata')
+        .from('generations' as any) // Ensure 'as any' for problematic tables
+        .select('id, image_url, prompt, seed, metadata, project_id') 
+        .eq('project_id', selectedProjectId) 
+        // Add a filter for toolType if you want to distinguish edit_travel generations
+        // .eq('metadata->>toolType', 'edit_travel_kontext') // Or 'edit_travel_flux' or a general 'edit_travel'
         .order('created_at', { ascending: false });
         
-      if (error) { console.error('[EditTravelToolPage] Error fetching edits:', error); toast.error("Failed to load previous edits."); return; }
+      if (error) {
+        console.error('Error fetching edits:', error); // [VideoLoadSpeedIssue]
+        toast.error("Failed to load previously generated edits.");
+        setGeneratedImages([]);
+        setShowPlaceholders(true);
+        return;
+      }
       
       if (data && data.length > 0) {
-        const dbImages: GeneratedImageWithMetadata[] = data.map(record => {
+        const dbImages: GeneratedImageWithMetadata[] = (data as any[]).map(record => {
           const metadata = (record.metadata || {}) as DisplayableMetadata;
-          const isActualVideo = metadata.content_type?.startsWith('video/') || metadata.tool_type === 'edit-travel-reconstructed-client' || (metadata.tool_type === 'edit-travel-flux' && metadata.content_type?.startsWith('video/'));
+          // Ensure toolType is part of metadata if needed for filtering/display
           return {
-            id: record.id,
-            url: record.image_url,
-            prompt: record.prompt || metadata.prompt,
+            id: record.id as string,
+            url: record.image_url as string,
+            prompt: record.prompt as string || metadata.prompt,
             seed: typeof record.seed === 'number' ? record.seed : (typeof metadata.seed === 'number' ? metadata.seed : undefined),
-            metadata: metadata, 
-            isVideo: isActualVideo,
+            metadata: { ...metadata, toolType: metadata.toolType || (generationMode === 'flux' ? 'edit_travel_flux' : 'edit_travel_kontext') },
           };
         });
         setGeneratedImages(dbImages);
         setShowPlaceholders(false);
       } else {
-        setShowPlaceholders(true);
         setGeneratedImages([]);
+        setShowPlaceholders(true);
       }
-    } catch (error) { console.error('[EditTravelToolPage] Error fetching edits:', error); toast.error("An error occurred while fetching edits."); }
+    } catch (error) {
+      console.error('Error fetching edits:', error); // [VideoLoadSpeedIssue]
+      toast.error("An error occurred while fetching edits.");
+        setGeneratedImages([]);
+      setShowPlaceholders(true);
+      }
   };
   
   const handleSaveApiKeys = (newFalApiKey: string, newOpenaiApiKey: string, _newReplicateApiKey: string) => {
     localStorage.setItem('fal_api_key', newFalApiKey);
     localStorage.setItem('openai_api_key', newOpenaiApiKey);
-    initializeFalClientKontext();
-    initializeHookFalClient();
+    // initializeHookFalClient(); // REMOVE - Hook no longer uses/needs this global FAL client init
     setFalApiKey(newFalApiKey);
     setOpenaiApiKey(newOpenaiApiKey);
     toast.success("API keys updated successfully");
   };
 
-  const handleFileChange = (file: File | null) => {
+  const handleFileChange = (files: File[]) => {
+    const file = files && files.length > 0 ? files[0] : null;
     setInputFile(file);
     if (file) {
       if (file.type.startsWith('image/')) {
@@ -474,784 +489,159 @@ const EditTravelToolPage = () => {
     // Explicitly return undefined to satisfy linter if it's confused
     return undefined;
   }, [reconstructVideo]);
-
-  const processMediaItem = async (
-    mediaFile: File, 
-    promptEntry: PromptEntry, 
-    originalInputFile: File,
-    timestamp?: number
-  ): Promise<GeneratedImageWithMetadata[]> => {
-    const logPrompt = promptEntry.shortPrompt || promptEntry.fullPrompt.substring(0,30)+'...';
-    toast.info(`Starting KONTEXT edit for prompt: "${logPrompt}"${timestamp !== undefined ? ` (frame @ ${timestamp.toFixed(2)}s)` : ''}`);
-
-    const successfullyProcessedImages: GeneratedImageWithMetadata[] = [];
-
-    const falInput: Record<string, any> = {
-        prompt: promptEntry.fullPrompt,
-        image_url: mediaFile,
-        num_images: imagesPerPrompt,
-    };
-
-    if (VALID_ASPECT_RATIOS.includes(aspectRatio)) {
-        falInput.aspect_ratio = aspectRatio;
-    } else {
-        const calculatedNumericRatio = parseRatio(aspectRatio);
-        let closestValidRatio = "1:1";
-        let minDiff = Infinity;
-
-        if (!isNaN(calculatedNumericRatio)) {
-          for (const validRatioStr of VALID_ASPECT_RATIOS) {
-            const validNumericRatio = parseRatio(validRatioStr);
-            if (!isNaN(validNumericRatio)) {
-              const diff = Math.abs(calculatedNumericRatio - validNumericRatio);
-              if (diff < minDiff) {
-                minDiff = diff;
-                closestValidRatio = validRatioStr;
-              }
-            }
-          }
-          falInput.aspect_ratio = closestValidRatio;
-          console.warn(`[EditTravelToolPage_FalInput] Calculated aspect ratio "${aspectRatio}" (value: ${calculatedNumericRatio.toFixed(3)}) is not a Fal-supported enum. Using closest valid ratio "${closestValidRatio}" (value: ${parseRatio(closestValidRatio).toFixed(3)}) for prompt: "${logPrompt}".`);
-        } else {
-          falInput.aspect_ratio = closestValidRatio;
-          console.warn(`[EditTravelToolPage_FalInput] Calculated aspect ratio "${aspectRatio}" is invalid. Using default Fal-supported ratio "${closestValidRatio}" for prompt: "${logPrompt}".`);
-        }
-    }
-
-    try {
-        console.log(`[EditTravelToolPage] Subscribing to Fal (kontext) for prompt "${logPrompt}". Input: ${mediaFile.name}, size: ${mediaFile.size}. Full API input (excluding file data):`, JSON.parse(JSON.stringify({...falInput, image_url: mediaFile.name })));
-            
-        const subscription = fal.subscribe("fal-ai/flux-pro/kontext", {
-            input: falInput as any,
-            logs: true,
-            onQueueUpdate: (update) => { 
-                if (update.status === "IN_PROGRESS" && update.logs) {
-                     update.logs.forEach(log => console.log(`[FAL_LOG][${log.level}] ${log.message}`));
-                }
-            },
-        });
-        kontextCurrentSubscriptionRef.current = subscription;
-
-        const result: any = await subscription;
-        kontextCurrentSubscriptionRef.current = null;
-
-        if (kontextCancelGenerationRef.current && (!result || !result.data || !result.data.images)) {
-            toast.info("Kontext generation for current item effectively cancelled.");
-            return [];
-        }
-
-        if (!result || !result.data || !result.data.images || !Array.isArray(result.data.images) || result.data.images.length === 0) {
-            if (!kontextCancelGenerationRef.current) toast.error("Fal (Kontext) API returned unexpected data or no images for current item.");
-            console.error("[EditTravelToolPage_Kontext] Fal API unexpected result:", result);
-            return [];
-        }
-            
-        const newImagesFromApi = result.data.images;
-        const responseSeed = result.data.seed;
-
-        for (const image of newImagesFromApi) {
-            if (kontextCancelGenerationRef.current) break;
-
-            const falImageUrl = image.url;
-            const imageContentType = image.content_type || 'image/jpeg';
-            let finalImageUrlForDbAndDisplay = falImageUrl;
-            let uploadedToSupabase = false;
-            let imageFileForUpload: File | null = null; 
-            let filePath: string | null = null;
-            let currentImageProcessedSuccessfully = false;
-
-            try {
-              console.log(`[EditTravelToolPage] Attempting to fetch image from Fal URL: ${falImageUrl}`);
-              const fetchResponse = await fetch(falImageUrl);
-              if (!fetchResponse.ok) {
-                throw new Error(`Failed to fetch image from Fal: ${fetchResponse.status} ${fetchResponse.statusText}`);
-              }
-              const imageBlob = await fetchResponse.blob();
-              
-              const fileExtension = imageBlob.type.split('/')[1] || imageContentType.split('/')[1] || 'jpg';
-              const fileName = `edit_travel_output_${nanoid(12)}.${fileExtension}`;
-              filePath = `public/${fileName}`;
-
-              imageFileForUpload = new File([imageBlob], fileName, { type: imageBlob.type });
-
-              console.log(`[EditTravelToolPage] Uploading ${fileName} to Supabase bucket 'image_uploads'. Path: ${filePath}`);
-              const { data: uploadData, error: uploadError } = await supabase.storage
-                .from('image_uploads')
-                .upload(filePath, imageFileForUpload, {
-                  cacheControl: '3600',
-                  upsert: false,
-                });
-
-              if (uploadError) {
-                throw uploadError;
-              }
-
-              const { data: publicUrlData } = supabase.storage
-                .from('image_uploads')
-                .getPublicUrl(filePath);
-
-              if (!publicUrlData || !publicUrlData.publicUrl) {
-                throw new Error('Could not get public URL for uploaded image from Supabase.');
-              }
-              finalImageUrlForDbAndDisplay = publicUrlData.publicUrl;
-              uploadedToSupabase = true;
-              console.log(`[EditTravelToolPage] Image successfully uploaded to Supabase: ${finalImageUrlForDbAndDisplay}`);
-
-            } catch (uploadError: any) {
-              console.error(`[EditTravelToolPage] Failed to download from Fal or upload to Supabase for URL ${falImageUrl}:`, uploadError);
-              toast.error(`Storage failed for an image from prompt "${logPrompt}": ${uploadError.message}. Using Fal URL.`);
-            }
-
-            const metadataForDb: DisplayableMetadata = {
-                prompt: promptEntry.fullPrompt,
-                seed: responseSeed, 
-                width: image.width,
-                height: image.height,
-                content_type: uploadedToSupabase && imageFileForUpload ? imageFileForUpload.type : imageContentType, 
-                tool_type: 'edit-travel',
-                original_image_filename: originalInputFile.name,
-                ...(timestamp !== undefined && { original_frame_timestamp: timestamp }),
-                ...(uploadedToSupabase && filePath && { supabase_storage_path: filePath }), 
-                api_parameters: {
-                    num_images: imagesPerPrompt,
-                    aspect_ratio: falInput.aspect_ratio,
-                    ...(falInput.guidance_scale && { guidance_scale: falInput.guidance_scale }),
-                    ...(falInput.seed && { seed: falInput.seed }), 
-                    generation_mode: 'kontext', // <-- ADDED FOR KONTEXT
-                }
-            };
-            
-            try {
-                const { data: dbData, error: dbError } = await supabase
-                    .from('generations')
-                    .insert({ 
-                        image_url: finalImageUrlForDbAndDisplay, 
-                        prompt: promptEntry.fullPrompt, 
-                        seed: responseSeed ? (Number(responseSeed) % 2147483647) : null, 
-                        metadata: metadataForDb as Json 
-                    })
-                    .select()
-                    .single();
-
-                if (dbError) throw dbError;
-
-                if (dbData) {
-                    const newImageEntry: GeneratedImageWithMetadata = {
-                        id: dbData.id,
-                        url: finalImageUrlForDbAndDisplay,
-                        prompt: promptEntry.fullPrompt,
-                        seed: responseSeed,
-                        metadata: metadataForDb
-                    };
-                    successfullyProcessedImages.push(newImageEntry);
-                    currentImageProcessedSuccessfully = true;
-                }
-            } catch (dbError: any) {
-                console.error(`[EditTravelToolPage] Error saving edited image for prompt '${logPrompt}' (URL: ${finalImageUrlForDbAndDisplay}):`, dbError);
-                toast.error(`DB Save Error for an image from prompt "${logPrompt}": ${dbError.message}. This image won't be added to the main gallery.`);
-            }
-        }
-
-        if (!kontextCancelGenerationRef.current && successfullyProcessedImages.length > 0) {
-            toast.success(`${successfullyProcessedImages.length} Kontext edit(s) generated and saved for prompt: "${logPrompt}"${timestamp !== undefined ? ` (frame @ ${timestamp.toFixed(2)}s)` : ''}`);
-        } else if (!kontextCancelGenerationRef.current && newImagesFromApi.length > 0 && successfullyProcessedImages.length === 0) {
-            toast.warning(`Kontext API returned images for prompt "${logPrompt}", but all failed to save.`);
-        }
-        return successfullyProcessedImages;
-    } catch (error: any) {
-        if (!kontextCancelGenerationRef.current) {
-            console.error(`[EditTravelToolPage_Kontext] Error during edit generation for prompt '${logPrompt}':`, error);
-            toast.error(`Kontext API call failed for prompt "${logPrompt}"${timestamp !== undefined ? ` (frame @ ${timestamp.toFixed(2)}s)` : ''}: ${error.message || "API error"}`);
-        }
-        return [];
-    }
-  };
   
   const handleGenerate = async () => {
+    if (!selectedProjectId) {
+      toast.error("No project selected. Please select a project first.");
+      return;
+    }
     if (!inputFile) {
-        toast.error("Please select an image or video to edit.");
+      toast.error("Please select an input image or video.");
         return;
     }
-    if (prompts.length === 0) {
-        toast.error("Please add at least one prompt.");
+    if (prompts.filter(p => p.fullPrompt.trim() !== "").length === 0) {
+      toast.error("Please enter at least one prompt.");
         return;
     }
-    if (!falApiKey) {
-        toast.error("FAL API key is missing. Please set it in settings.");
+    // FAL API key check for 'kontext' mode - uses falApiKey state which is now set from localStorage
+    if (generationMode === 'kontext' && !falApiKey) { 
+        toast.error("FAL API Key is not set for Kontext. Please set it in the settings (top right gear icon).");
+        setIsCreatingTask(false); // Reset creating task state
+        return;
+    }
+    // Check for 'flux' mode FAL API key (though not directly calling FAL client here anymore for generation)
+     if (generationMode === 'flux' && !localStorage.getItem('fal_api_key')) {
+        toast.error("FAL API Key is not set for Flux. Please set it in the settings.");
+        setIsCreatingTask(false); // Reset creating task state
         return;
     }
 
-    if (showPlaceholders) { setGeneratedImages([]); setShowPlaceholders(false); }
+    // setIsKontextGenerating(true); // This was specific. isCreatingTask is now general.
+    setIsCreatingTask(true); // Moved this to be set before API key checks for early exit
+    kontextCancelGenerationRef.current = false;
+    reconstructionCancelRef.current = false;
 
-    if (generationMode === 'flux') {
-        setIsKontextGenerating(false); // This state might need renaming if it becomes generic for "isFalGeneratingKontext"
-        kontextCancelGenerationRef.current = false; // Ensure Kontext cancellation is reset if switching to Flux
-        
-        let overallSuccess = true; // Will be determined by batch success
-        let imagesActuallyGeneratedThisSession = 0;
-        let currentBatchFluxImages: GeneratedImageWithMetadata[] = []; // ADDED for Flux batch
+    let uploadedInputUrl: string | null = null;
+    try {
+      toast.info("Uploading input file...");
+      uploadedInputUrl = await uploadImageToStorage(inputFile);
+      if (!uploadedInputUrl) {
+        toast.error("Input file upload failed. Please try again.");
+        setIsCreatingTask(false);
+        return;
+      }
+      toast.success("Input file uploaded!");
+    } catch (uploadError: any) {
+      console.error("[EditTravelToolPage] Error uploading input file:", uploadError); // [VideoLoadSpeedIssue]
+      toast.error(`Failed to upload input file: ${uploadError.message || 'Unknown error'}`);
+      setIsCreatingTask(false);
+      return;
+    }
 
-        if (inputFile.type.startsWith('video/') && videoDuration && prompts.length > 0) {
-            toast.info(`Preparing to process ${prompts.length} frame(s) from ${videoDuration.toFixed(1)}s video for Flux.`);
-            const numFramesToExtract = prompts.length;
-            const videoElement = document.createElement('video');
-            videoElement.muted = true;
-            const videoObjectUrl = URL.createObjectURL(inputFile);
-            videoElement.src = videoObjectUrl;
+    const activePrompts = prompts.filter(p => p.fullPrompt.trim() !== "");
+    const commonTaskParams = {
+      input_file_url: uploadedInputUrl,
+      original_input_filename: inputFile.name,
+      prompts: activePrompts.map(p => ({ id: p.id, fullPrompt: p.fullPrompt, shortPrompt: p.shortPrompt })),
+      images_per_prompt: imagesPerPrompt,
+      aspect_ratio: aspectRatio, // For Kontext or as a hint for Flux
+      reconstruct_video: inputFile.type.startsWith('video/') && reconstructVideo, // Add video reconstruction flag
+      // Fal specific (can be defaults or from form)
+      // num_inference_steps, guidance_scale, etc.
+    };
 
-            videoElement.onloadedmetadata = async () => {
-                console.log(`[VideoProcessing_Flux] Video metadata loaded. Duration: ${videoElement.duration}s. Seeking to extract frames for Flux.`);
-                for (let i = 0; i < numFramesToExtract; i++) {
-                    if (kontextCancelGenerationRef.current) {
-                        toast.info("Flux frame extraction/processing cancelled.");
-                        overallSuccess = false;
-                        break;
-                    }
-                    let currentTimeToSeek = 0;
-                    if (numFramesToExtract === 1) {
-                        currentTimeToSeek = 0;
-                    } else if (videoElement.duration > 0) {
-                        currentTimeToSeek = i * (videoElement.duration / (numFramesToExtract -1));
-                        if (i === numFramesToExtract -1) currentTimeToSeek = videoElement.duration;
-                    } else {
-                        currentTimeToSeek = 0;
-                    }
-                    videoElement.currentTime = Math.min(currentTimeToSeek, videoElement.duration);
-                    console.log(`[VideoProcessing_Flux] Prompt ${i+1}/${numFramesToExtract}: Seeking to ${videoElement.currentTime.toFixed(2)}s`);
+    let taskType: string;
+    let specificParams: any;
 
-                    try {
-                        await new Promise<void>((resolve, reject) => {
-                            const seekTimeout = setTimeout(() => reject(new Error("Seek operation timed out")), 5000);
-                            videoElement.onseeked = () => {
-                                clearTimeout(seekTimeout);
-                                console.log(`[VideoProcessing_Flux] Seeked to ${videoElement.currentTime.toFixed(2)}s`);
-                                resolve();
-                            };
-                            videoElement.onerror = (e) => {
-                                clearTimeout(seekTimeout);
-                                console.error("[VideoProcessing_Flux] Error during video seek:", e);
-                                reject(new Error("Video seek error"));
-                            };
-                        });
-
-                        const canvas = document.createElement('canvas');
-                        canvas.width = videoElement.videoWidth;
-                        canvas.height = videoElement.videoHeight;
-                        const ctx = canvas.getContext('2d');
-                        if (!ctx) {
-                            toast.error("Could not get canvas context for Flux frame extraction.");
-                            overallSuccess = false;
-                            continue;
-                        }
-                        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-                        const frameDataUrl = canvas.toDataURL('image/jpeg');
-                        const frameFile = dataURLtoFile(frameDataUrl, `flux_frame_at_${videoElement.currentTime.toFixed(2)}s.jpg`, 'image/jpeg');
-                        console.log(`[VideoProcessing_Flux] Extracted frame ${i+1} at ${videoElement.currentTime.toFixed(2)}s as ${frameFile.name}`);
-
-                        if (!kontextCancelGenerationRef.current) {
-                            const currentPromptEntry = prompts[i];
-                            const params: FalImageGenerationParams = {
-                                prompts: [currentPromptEntry],
-                                imagesPerPrompt: imagesPerPrompt,
-                                startingImageFile: frameFile,
-                                depthStrength: fluxDepthStrength,
-                                softEdgeStrength: fluxSoftEdgeStrength,
-                                imageSize: aspectRatio,
-                                toolType: 'edit-travel',
-                                originalFrameTimestamp: videoElement.currentTime,
-                                loras: lorasForFlux, 
-                                original_image_filename: inputFile.name,
-                                customMetadataFields: { generation_mode: 'flux' }
-                            };
-                            console.log("[EditTravelToolPage_Flux_VideoFrame] Starting Flux generation for frame with params:", params);
-                            const newFluxImagesFromFrame = await generateFluxImages(params);
-                            console.log('[EditTravelToolPage_Flux_VideoFrame_Debug] Images from hook:', JSON.parse(JSON.stringify(newFluxImagesFromFrame)));
-                            if (newFluxImagesFromFrame.length > 0) {
-                                const currentFrameTime = videoElement.currentTime;
-                                // The hook should already be setting original_frame_timestamp and generation_mode: flux
-                                // No need to map updatedFluxImages here if hook does it.
-                                currentBatchFluxImages.push(...newFluxImagesFromFrame); // ADD to batch
-                                // imagesActuallyGeneratedThisSession will be updated from batch length later
-                            } else {
-                                // generateFluxImages returning empty means failure for that frame
-                                console.warn(`[VideoProcessing_Flux] generateFluxImages returned no images for frame at ${videoElement.currentTime.toFixed(2)}s`);
-                                // overallSuccess = false; // Don't set here, assess batch later
-                            }
-                        }
-                    } catch (error) {
-                        console.error(`[VideoProcessing_Flux] Error processing frame ${i+1} at ${currentTimeToSeek.toFixed(2)}s:`, error);
-                        toast.error(`Error processing Flux frame ${i+1}: ${(error as Error).message}`);
-                        // overallSuccess = false; // Don't set here
-                    }
-                    if (kontextCancelGenerationRef.current) break; // kontextCancelGenerationRef is used by Flux for now
-                }
-
-                URL.revokeObjectURL(videoObjectUrl);
-                imagesActuallyGeneratedThisSession = currentBatchFluxImages.length;
-
-                if (imagesActuallyGeneratedThisSession > 0) {
-                    setGeneratedImages(prev => [
-                        ...currentBatchFluxImages, 
-                        ...prev.filter(pImg => !currentBatchFluxImages.find(cImg => cImg.id === pImg.id))
-                    ]);
-                }
-
-                if (kontextCancelGenerationRef.current) { // Using kontextCancel for Flux too
-                    if (imagesActuallyGeneratedThisSession > 0) {
-                        toast.info(`Flux video processing cancelled. ${imagesActuallyGeneratedThisSession} image(s) from this batch were saved.`);
-                    } else {
-                        toast.info("Flux video processing cancelled. No images from this batch were saved.");
-                    }
-                } else { // Not cancelled
-                    if (imagesActuallyGeneratedThisSession === 0 && prompts.length > 0) {
-                        toast.info("Flux video processing for this batch complete, but no images were successfully generated.");
-                        overallSuccess = false;
-                    } else if (imagesActuallyGeneratedThisSession > 0) {
-                        const expectedImagesApprox = prompts.length * imagesPerPrompt;
-                        if (imagesActuallyGeneratedThisSession < expectedImagesApprox && prompts.length > 0) {
-                            toast.warning(`Flux video batch processing complete. Approx ${imagesActuallyGeneratedThisSession}/${expectedImagesApprox} images generated. Some may have failed.`);
-                        } else {
-                            toast.success("Flux video batch processing complete. All expected images generated!");
-                        }
-                        overallSuccess = true; // If any images, generation part is successful for reconstruction
-                    } else {
-                        overallSuccess = false;
-                    }
-                }
-
-                // Reconstruction logic for Flux (now uses currentBatchFluxImages)
-                if (reconstructVideo && inputFile.type.startsWith("video/")) {
-                    if (kontextCancelGenerationRef.current) { // Still using kontextCancelRef for Flux cancellation for now
-                         toast.info("Flux video reconstruction skipped: generation was cancelled.");
-                    } else if (imagesActuallyGeneratedThisSession === 0) {
-                        toast.warning("Flux video reconstruction skipped: no frames were generated in this batch.");
-                    } else { // We have images from this batch and it wasn't cancelled
-                        console.log(`[FluxReconstructionDebug] Attempting reconstruction. Condition: overallSuccess=${overallSuccess}, currentBatchFluxImages.length=${currentBatchFluxImages.length}`);
-                        
-                        // --- BEGIN FluxReconstructionDebug LOGGING (using current batch) ---
-                        console.log("[FluxReconstructionDebug_MetadataCheck] Images in CURRENT BATCH for Flux reconstruction:");
-                        currentBatchFluxImages.forEach((img, index) => {
-                          console.log(
-                            `[FluxReconstructionDebug_MetadataCheck] Batch Image ${index + 1}/${currentBatchFluxImages.length}: ` +
-                            `ID: ${img.id}, ` +
-                            `OriginalFile: ${img.metadata?.original_image_filename}, ` +
-                            `InputFile: ${inputFile?.name}, ` +
-                            `ToolType: ${img.metadata?.tool_type}, ` +
-                            `FrameTimestamp: ${img.metadata?.original_frame_timestamp}, ` +
-                            `APIGenMode: ${(img.metadata?.api_parameters as any)?.generation_mode}`
-                          );
-                        });
-                        // --- END FluxReconstructionDebug LOGGING ---
-
-                        const framesForReconstruction = currentBatchFluxImages
-                            .filter(img =>
-                                img.metadata?.original_frame_timestamp !== undefined &&
-                                img.metadata?.tool_type === 'edit-travel' && 
-                                img.metadata?.original_image_filename === inputFile.name &&
-                                (img.metadata?.api_parameters as any)?.generation_mode === 'flux'
-                            )
-                            .sort((a, b) => (a.metadata!.original_frame_timestamp!) - (b.metadata!.original_frame_timestamp!));
-
-                        console.log(`[FluxReconstructionDebug] Found ${framesForReconstruction.length} frames from current batch for reconstruction after filtering.`);
-
-                        if (framesForReconstruction.length > 0) {
-                            const firstFrameMeta = framesForReconstruction[0].metadata;
-                            const outputWidth = firstFrameMeta?.width || videoElement.videoWidth || 640;
-                            const outputHeight = firstFrameMeta?.height || videoElement.videoHeight || 480;
-                            const actualVideoDuration = videoElement.duration;
-
-                            if (actualVideoDuration === null || actualVideoDuration === undefined || actualVideoDuration === 0) {
-                                toast.error("Video duration not available or is zero, cannot proceed with Flux reconstruction.");
-                            } else {
-                                const effectiveVideoFps = framesForReconstruction.length > 1
-                                    ? (framesForReconstruction.length -1) / actualVideoDuration
-                                    : 24;
-                                console.log(`[FluxReconstructionDebug] Starting client-side reconstruction with ${framesForReconstruction.length} frames. Effective FPS for timing: ${effectiveVideoFps.toFixed(2)}. Actual Vid Duration: ${actualVideoDuration.toFixed(2)}s.`);
-                                
-                                reconstructionCancelRef.current = false; 
-                                setIsClientSideReconstructing(true);
-                                let reconstructedVideoFile: File | null = null;
-                                try {
-                                  const audioBuffer = await extractAudio(inputFile, (message: string) => console.log(message)); 
-                                  reconstructedVideoFile = await reconstructVideoClientSide(
-                                      inputFile.name,
-                                      framesForReconstruction,
-                                      actualVideoDuration,
-                                      effectiveVideoFps,
-                                      outputWidth,
-                                      outputHeight,
-                                      audioBuffer,
-                                      () => reconstructionCancelRef.current, 
-                                      (message: string) => toast.info(message) 
-                                  );
-                                } catch (reconstructionError: any) {
-                                  console.error("[EditTravelToolPage_FluxReconstruction] Error during client-side reconstruction:", reconstructionError);
-                                  toast.error(`Flux Video Reconstruction Failed: ${reconstructionError.message}`);
-                                } finally {
-                                  setIsClientSideReconstructing(false);
-                                }
-
-                                if (reconstructedVideoFile) {
-                                    await saveReconstructedVideo({
-                                        reconstructedVideoFile,
-                                        originalInputFileName: inputFile.name,
-                                        outputWidth,
-                                        outputHeight,
-                                        actualVideoDuration,
-                                        framesForReconstructionLength: framesForReconstruction.length,
-                                        generationMode: 'flux', 
-                                        supabase,
-                                        setGeneratedImages, 
-                                    });
-                                }
-                            }
-                        } else {
-                            toast.warning("Flux reconstruction was requested, but no suitable frames were found in the current batch.");
-                        }
-                    }
-                }
-                setIsKontextGenerating(false);
-            };
-
-            videoElement.onerror = (e) => {
-                console.error("[VideoProcessing_Flux] Error loading video metadata:", e);
-                toast.error("Error loading video for Flux frame extraction. Cannot proceed.");
-                URL.revokeObjectURL(videoObjectUrl);
-            };
-
-        } else {
-          let currentBatchFluxImages: GeneratedImageWithMetadata[] = [];
-          for (const promptEntry of prompts) {
-              if (kontextCancelGenerationRef.current) {
-                  toast.info("Flux generation cancelled by user.");
-                  break;
-              }
-              const params: FalImageGenerationParams = {
-                  prompts: [promptEntry],
-                  imagesPerPrompt: imagesPerPrompt,
-                  startingImageFile: inputFile,
-                  imageSize: aspectRatio,
+    if (generationMode === 'kontext') {
+      taskType = 'edit_travel_kontext';
+      specificParams = {
+        ...commonTaskParams,
+        // Kontext specific params (if any beyond common ones)
+        // e.g., model_id: "fal-ai/anydiffusion" (or similar if Kontext uses a specific one)
+        // seed: // if kontext supports it directly in API
+      };
+    } else { // 'flux' mode
+      taskType = 'edit_travel_flux';
+      specificParams = {
+        ...commonTaskParams,
+        toolType: 'edit_travel_flux', // Match what useFalImageGeneration might have used for metadata
+        imageSize: aspectRatio, // The hook maps this, worker should too
+        loras: lorasForFlux, // Predefined LoRAs for Flux mode in this tool
                   depthStrength: fluxDepthStrength,
                   softEdgeStrength: fluxSoftEdgeStrength,
-                  toolType: 'edit-travel',
-                  original_image_filename: inputFile.name,
-                  customMetadataFields: { generation_mode: 'flux' }
-              };
-              console.log("[EditTravelToolPage_Flux_Image] Starting Flux generation for image with params:", params);
-              const newFluxImages = await generateFluxImages(params);
-              if (newFluxImages.length > 0) {
-                  currentBatchFluxImages.push(...newFluxImages);
-              } else {
-                  console.warn(`[FluxImageDebug] generateFluxImages returned no images for prompt "${promptEntry.shortPrompt || promptEntry.fullPrompt.substring(0,20)}".`);
-              }
-          }
-          imagesActuallyGeneratedThisSession = currentBatchFluxImages.length;
-
-          if (imagesActuallyGeneratedThisSession > 0) {
-            setGeneratedImages(prev => [
-                ...currentBatchFluxImages, 
-                ...prev.filter(pImg => !currentBatchFluxImages.find(cImg => cImg.id === pImg.id))
-            ]);
-          }
-
-          if (kontextCancelGenerationRef.current) {
-              if (imagesActuallyGeneratedThisSession > 0) {
-                  toast.info(`Flux generation cancelled. ${imagesActuallyGeneratedThisSession} image(s) from this batch were created (image input).`);
-              } else {
-                  toast.info("Flux generation cancelled. No images from this batch were created (image input).");
-              }
-          } else { // Not cancelled
-              if (imagesActuallyGeneratedThisSession === 0 && prompts.length > 0) {
-                  toast.info("Flux generation for this batch complete, but no images were produced (image input).");
-              } else if (imagesActuallyGeneratedThisSession > 0) {
-                  const expectedImagesApprox = prompts.length * imagesPerPrompt;
-                  if (imagesActuallyGeneratedThisSession < expectedImagesApprox && prompts.length > 0) {
-                    toast.warning(`Flux batch processing complete. Approx ${imagesActuallyGeneratedThisSession}/${expectedImagesApprox} images generated (image input). Some may have failed.`);
-                  } else {
-                    toast.success("All Flux image edit tasks for this batch complete!");
-                  }
-              }
-          }
-        }
-        setIsKontextGenerating(false);
-    } else { // Kontext Mode
-        setIsKontextGenerating(true);
-        kontextCancelGenerationRef.current = false;
-
-        let overallSuccess = true;
-        let imagesActuallyGeneratedThisSession = 0;
-        let currentBatchKontextImages: GeneratedImageWithMetadata[] = []; // Declaration for Kontext batch
-
-        if (inputFile.type.startsWith('video/') && videoDuration && prompts.length > 0) {
-          toast.info(`Preparing to process ${prompts.length} frame(s) from ${videoDuration.toFixed(1)}s video for Kontext.`);
-          const numFramesToExtract = prompts.length;
-          const videoElement = document.createElement('video');
-          videoElement.muted = true;
-          const videoObjectUrl = URL.createObjectURL(inputFile);
-          videoElement.src = videoObjectUrl;
-
-          videoElement.onloadedmetadata = async () => {
-            console.log(`[KontextVideoDebug] Video metadata loaded. Duration: ${videoElement.duration}s. Seeking to extract frames for Kontext.`);
-            for (let i = 0; i < numFramesToExtract; i++) {
-              if (kontextCancelGenerationRef.current) {
-                toast.info("Kontext frame extraction/processing cancelled.");
-                overallSuccess = false;
-                break;
-              }
-              let currentTimeToSeek = 0;
-              if (numFramesToExtract === 1) {
-                currentTimeToSeek = 0;
-              } else if (videoElement.duration > 0) {
-                currentTimeToSeek = i * (videoElement.duration / (numFramesToExtract -1));
-                if (i === numFramesToExtract -1) currentTimeToSeek = videoElement.duration;
-              } else {
-                currentTimeToSeek = 0;
-              }
-              videoElement.currentTime = Math.min(currentTimeToSeek, videoElement.duration);
-              console.log(`[KontextVideoDebug] Prompt ${i+1}/${numFramesToExtract}: Seeking to ${videoElement.currentTime.toFixed(2)}s`);
-
-              try {
-                await new Promise<void>((resolve, reject) => {
-                  const seekTimeout = setTimeout(() => reject(new Error("Seek operation timed out")), 5000);
-                  videoElement.onseeked = () => {
-                    clearTimeout(seekTimeout);
-                    console.log(`[KontextVideoDebug] Seeked to ${videoElement.currentTime.toFixed(2)}s`);
-                    resolve();
-                  };
-                  videoElement.onerror = (e) => {
-                    clearTimeout(seekTimeout);
-                    console.error("[KontextVideoDebug] Error during video seek:", e);
-                    reject(new Error("Video seek error"));
-                  };
-                });
-
-                const canvas = document.createElement('canvas');
-                canvas.width = videoElement.videoWidth;
-                canvas.height = videoElement.videoHeight;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) {
-                  toast.error("Could not get canvas context for Kontext frame extraction.");
-                  overallSuccess = false;
-                  continue;
-                }
-                ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-                const frameDataUrl = canvas.toDataURL('image/jpeg');
-                const frameFile = dataURLtoFile(frameDataUrl, `kontext_frame_at_${videoElement.currentTime.toFixed(2)}s.jpg`, 'image/jpeg');
-                console.log(`[KontextVideoDebug] Extracted frame ${i+1} at ${videoElement.currentTime.toFixed(2)}s as ${frameFile.name}`);
-
-                if (!kontextCancelGenerationRef.current) {
-                  const currentPromptEntry = prompts[i];
-                  const newImagesFromPrompt = await processMediaItem(frameFile, currentPromptEntry, inputFile, videoElement.currentTime);
-                  if (newImagesFromPrompt.length > 0) {
-                    currentBatchKontextImages.push(...newImagesFromPrompt);
-                  } else {
-                    console.warn(`[KontextImageDebug] processMediaItem for prompt "${currentPromptEntry.shortPrompt || currentPromptEntry.fullPrompt.substring(0,20)}" returned no images.`);
-                  }
-                }
-              } catch (error) {
-                console.error(`[KontextVideoDebug] Error processing frame ${i+1} at ${currentTimeToSeek.toFixed(2)}s:`, error);
-                toast.error(`Error processing Kontext frame ${i+1}: ${(error as Error).message}`);
-                // overallSuccess = false; // Don't set here
-              }
-              if (kontextCancelGenerationRef.current) break; // kontextCancelGenerationRef is used by Kontext for now
-            }
-
-            URL.revokeObjectURL(videoObjectUrl);
-            imagesActuallyGeneratedThisSession = currentBatchKontextImages.length;
-
-            if (imagesActuallyGeneratedThisSession > 0) {
-              setGeneratedImages(prev => [
-                  ...currentBatchKontextImages, 
-                  ...prev.filter(pImg => !currentBatchKontextImages.find(cImg => cImg.id === pImg.id))
-              ]);
-            }
-
-            if (kontextCancelGenerationRef.current) {
-                if (imagesActuallyGeneratedThisSession > 0) {
-                    toast.info(`Kontext generation cancelled. ${imagesActuallyGeneratedThisSession} image(s) from this batch were created (video input).`);
-                } else {
-                    toast.info("Kontext generation cancelled. No images from this batch were created (video input).");
-                }
-            } else { 
-                if (imagesActuallyGeneratedThisSession === 0 && prompts.length > 0) {
-                    toast.info("Kontext generation for this batch complete, but no images were produced (video input).");
-                } else if (imagesActuallyGeneratedThisSession > 0) {
-                    const expectedImagesApprox = prompts.length * imagesPerPrompt;
-                    if (imagesActuallyGeneratedThisSession < expectedImagesApprox && prompts.length > 0) {
-                      toast.warning(`Kontext batch processing complete. Approx ${imagesActuallyGeneratedThisSession}/${expectedImagesApprox} images generated (video input). Some may have failed.`);
-                    } else {
-                      toast.success("All Kontext image edit tasks for this batch complete!");
-                    }
-                }
-            }
-
-            console.log(`[KontextVideoDebug] Video processing loop finished. overallSuccess (batch based): ${overallSuccess}, imagesInBatch: ${imagesActuallyGeneratedThisSession}, reconstructVideo: ${reconstructVideo}`);
-
-            if (reconstructVideo && inputFile.type.startsWith("video/")) { 
-              // CORRECTED KONTEXT RECONSTRUCTION BLOCK
-              console.log(`[KontextVideoDebug] Attempting reconstruction. Condition: overallSuccess=${overallSuccess}, currentBatchKontextImages.length=${currentBatchKontextImages.length}`);
-              if (kontextCancelGenerationRef.current) {
-                  toast.info("Kontext video reconstruction skipped: generation was cancelled.");
-              } else if (imagesActuallyGeneratedThisSession === 0) { 
-                  toast.warning("Kontext video reconstruction skipped: no frames were generated in this batch.");
-              } else { 
-                  console.log("[KontextVideoDebug_MetadataCheck] Images in CURRENT BATCH for Kontext reconstruction:");
-                  currentBatchKontextImages.forEach((img, index) => { // Ensure this uses currentBatchKontextImages
-                    console.log(
-                      `[KontextVideoDebug_MetadataCheck] Batch Image ${index + 1}/${currentBatchKontextImages.length}: ` +
-                      `ID: ${img.id}, ` +
-                      `OriginalFile: ${img.metadata?.original_image_filename}, ` +
-                      `InputFile: ${inputFile?.name}, ` +
-                      `ToolType: ${img.metadata?.tool_type}, ` +
-                      `FrameTimestamp: ${img.metadata?.original_frame_timestamp}, ` +
-                      `APIGenMode: ${(img.metadata?.api_parameters as any)?.generation_mode}`
-                    );
-                  });
-
-                  const framesForReconstruction = currentBatchKontextImages // Ensure this uses currentBatchKontextImages
-                    .filter(img => 
-                        img.metadata?.original_frame_timestamp !== undefined &&
-                        img.metadata?.original_image_filename === inputFile.name &&
-                        ( (img.metadata?.api_parameters as any)?.generation_mode === 'kontext' || 
-                          (img.metadata?.api_parameters as any)?.generation_mode === undefined )
-                    )
-                    .sort((a, b) => (a.metadata!.original_frame_timestamp!) - (b.metadata!.original_frame_timestamp!));
-
-                  console.log(`[KontextVideoDebug] Found ${framesForReconstruction.length} frames from current batch for reconstruction after filtering.`);
-                  if (framesForReconstruction.length > 0) {
-                      const firstFrameMeta = framesForReconstruction[0].metadata;
-                      const outputWidth = firstFrameMeta?.width || videoElement.videoWidth || 640;
-                      const outputHeight = firstFrameMeta?.height || videoElement.videoHeight || 480;
-                      const actualVideoDuration = videoElement.duration; // videoElement should be in scope here from the outer video processing block
-                      
-                      if (actualVideoDuration === null || actualVideoDuration === undefined || actualVideoDuration === 0) {
-                          toast.error("Video duration not available or is zero, cannot proceed with Kontext reconstruction.");
-                      } else {
-                        const effectiveVideoFps = framesForReconstruction.length > 1 
-                            ? (framesForReconstruction.length -1) / actualVideoDuration
-                            : 24; 
-                        console.log(`[VideoReconstruction_Kontext] Starting client-side reconstruction with ${framesForReconstruction.length} frames. Effective FPS for timing: ${effectiveVideoFps.toFixed(2)}. Actual Vid Duration: ${actualVideoDuration.toFixed(2)}s.`);
-                        
-                        reconstructionCancelRef.current = false; 
-                        setIsClientSideReconstructing(true);
-                        let reconstructedVideoFile: File | null = null;
-                        try {
-                            const audioBuffer = await extractAudio(inputFile, (message: string) => console.log(message)); 
-                            reconstructedVideoFile = await reconstructVideoClientSide(
-                                inputFile.name, 
-                                framesForReconstruction, 
-                                actualVideoDuration,
-                                effectiveVideoFps,
-                                outputWidth,
-                                outputHeight,
-                                audioBuffer,
-                                () => reconstructionCancelRef.current, 
-                                (message: string) => toast.info(message) 
-                            );
-                        } catch (reconstructionError: any) {
-                            console.error("[EditTravelToolPage_KontextReconstruction] Error during client-side reconstruction:", reconstructionError);
-                            toast.error(`Kontext Video Reconstruction Failed: ${reconstructionError.message}`);
-                        } finally {
-                            setIsClientSideReconstructing(false);
-                        }
-
-                        if (reconstructedVideoFile) {
-                            await saveReconstructedVideo({
-                                reconstructedVideoFile,
-                                originalInputFileName: inputFile.name,
-                                outputWidth,
-                                outputHeight,
-                                actualVideoDuration,
-                                framesForReconstructionLength: framesForReconstruction.length,
-                                generationMode: 'kontext', 
-                                supabase,
-                                setGeneratedImages,
-                            });
-                        }
-                      }
-                  } else {
-                      toast.warning("Kontext reconstruction was requested, but no suitable frames were found in the current batch.");
-                  }
-              }
-            }
-            // setIsKontextGenerating(false); // This is already handled at the end of the Kontext single image block and after video processing
-          };
-
-          // Error handler for videoElement.onloadedmetadata
-          videoElement.onerror = (e) => {
-            console.error("[VideoProcessing_Kontext] Error loading video metadata:", e);
-            toast.error("Error loading video for Kontext frame extraction. Cannot proceed.");
-            URL.revokeObjectURL(videoObjectUrl);
-            setIsKontextGenerating(false);
-            console.log(`[KontextVideoDebug] videoElement.onerror triggered. Error:`, e); 
-          };
-
-        } else { // Kontext processing for a single image input
-          currentBatchKontextImages = []; 
-          for (const promptEntry of prompts) {
-              if (kontextCancelGenerationRef.current) {
-                  toast.info("Kontext edit generation cancelled by user.");
-                  break;
-              }
-              const newImagesFromPrompt = await processMediaItem(inputFile, promptEntry, inputFile);
-              if (newImagesFromPrompt.length > 0) {
-                currentBatchKontextImages.push(...newImagesFromPrompt);
-              } else {
-                console.warn(`[KontextImageDebug] processMediaItem for prompt "${promptEntry.shortPrompt || promptEntry.fullPrompt.substring(0,20)}" returned no images.`);
-              }
-          }
-
-          imagesActuallyGeneratedThisSession = currentBatchKontextImages.length;
-
-          if (imagesActuallyGeneratedThisSession > 0) {
-            setGeneratedImages(prev => [
-                ...currentBatchKontextImages, 
-                ...prev.filter(pImg => !currentBatchKontextImages.find(cImg => cImg.id === pImg.id))
-            ]);
-          }
-
-          if (kontextCancelGenerationRef.current) {
-              if (imagesActuallyGeneratedThisSession > 0) {
-                  toast.info(`Kontext generation cancelled. ${imagesActuallyGeneratedThisSession} image(s) from this batch were created (image input).`);
-              } else {
-                  toast.info("Kontext generation cancelled. No images from this batch were created (image input).");
-              }
-          } else { 
-              if (imagesActuallyGeneratedThisSession === 0 && prompts.length > 0) {
-                  toast.info("Kontext generation for this batch complete, but no images were produced (image input).");
-              } else if (imagesActuallyGeneratedThisSession > 0) {
-                  const expectedImagesApprox = prompts.length * imagesPerPrompt;
-                  if (imagesActuallyGeneratedThisSession < expectedImagesApprox && prompts.length > 0) {
-                    toast.warning(`Kontext batch processing complete. Approx ${imagesActuallyGeneratedThisSession}/${expectedImagesApprox} images generated (image input). Some may have failed.`);
-                  } else {
-                    toast.success("All Kontext image edit tasks for this batch complete!");
-                  }
-              }
-          }
-        }
-        setIsKontextGenerating(false); // Ensure this is called at the end of Kontext mode logic
+        // Add other FalImageGenerationParams if needed and available from form
+        // falModelId: "fal-ai/flux-general",
+      };
     }
+    
+    toast.info(`Creating '${generationMode}' generation task via API...`);
 
-    if (kontextCurrentSubscriptionRef.current && typeof kontextCurrentSubscriptionRef.current.unsubscribe === 'function') {
-        console.log("[HandleGenerateCleanup_Kontext] Unsubscribing from active Fal (Kontext) subscription if any.");
-        kontextCurrentSubscriptionRef.current.unsubscribe();
+    try {
+      const response = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: selectedProjectId,
+          task_type: taskType, 
+          params: specificParams as Json,
+          status: 'Pending',
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: response.statusText }));
+        throw new Error(errorData.message || `HTTP error ${response.status}`);
+      }
+
+      const newTask = await response.json();
+
+      if (newTask && newTask.id) {
+        console.log(`[EditTravelToolPage] ${generationMode} task created via API:`, newTask);
+        toast.success(`${generationMode.charAt(0).toUpperCase() + generationMode.slice(1)} task created (ID: ${(newTask.id as string).substring(0,8)}...).`);
+        if (showPlaceholders && activePrompts.length * imagesPerPrompt > 0) {
+          setGeneratedImages([]);
+          setShowPlaceholders(false);
+        }
+      } else {
+         console.warn(`[EditTravelToolPage] ${generationMode} task creation via API no ID returned or error in response data.`);
+         toast.info(`${generationMode.charAt(0).toUpperCase() + generationMode.slice(1)} task creation registered, but no confirmation ID from API.`);
+      }
+    } catch (err: any) {
+      console.error(`[EditTravelToolPage] Exception creating ${generationMode} task via API:`, err);
+      toast.error(`An unexpected error occurred while creating the ${generationMode} task via API: ${err.message || 'Unknown API error'}`);
+    } finally {
+      setIsCreatingTask(false);
     }
-    kontextCurrentSubscriptionRef.current = null;
   };
   
   const handleCancelGeneration = () => {
-    if (generationMode === 'flux') {
-        cancelFluxGeneration();
-    } else {
-        kontextCancelGenerationRef.current = true;
+    // if (generationMode === 'flux') {
+    //     cancelFluxGeneration(); // From old hook, not applicable to tasks here
+    // } else {
+    //     // Kontext cancellation might need to be re-evaluated for tasks
+    //     kontextCancelGenerationRef.current = true;
+    //     if (kontextCurrentSubscriptionRef.current && typeof kontextCurrentSubscriptionRef.current.unsubscribe === 'function') {
+    //         kontextCurrentSubscriptionRef.current.unsubscribe();
+    //     }
+    //     kontextCurrentSubscriptionRef.current = null;
+    //     setIsKontextGenerating(false);
+    // }
+    // For now, a general approach to signal UI cancellation:
+    if (isCreatingTask) {
+        toast.info("Attempting to cancel task creation/generation process...");
+        // Actual task cancellation in DB would be an async operation to update task status
+        // For client-side, we can reset the creating state.
+        setIsCreatingTask(false); 
+        // Reset kontext specific refs if they were only for direct fal calls
+        kontextCancelGenerationRef.current = true; // If this flag is used by other effects
         if (kontextCurrentSubscriptionRef.current && typeof kontextCurrentSubscriptionRef.current.unsubscribe === 'function') {
-            kontextCurrentSubscriptionRef.current.unsubscribe();
+             kontextCurrentSubscriptionRef.current.unsubscribe(); // This was for direct fal.subscribe
         }
-        kontextCurrentSubscriptionRef.current = null;
-        setIsKontextGenerating(false);
-        toast.info("Kontext image editing cancelled.");
+        kontextCurrentSubscriptionRef.current = null; 
     }
-    reconstructionCancelRef.current = true; // Signal reconstruction to cancel
+    
+    reconstructionCancelRef.current = true; 
     setIsClientSideReconstructing(false); 
   };
 
@@ -1274,8 +664,18 @@ const EditTravelToolPage = () => {
       return false;
     }
     if (!generationId) { toast.error("Image has no ID."); return false; }
+    if (!selectedProjectId) { // Added check for selectedProjectId
+        toast.error("No project selected. Cannot add image to shot.");
+        return false;
+    }
     try {
-      await addImageToShotMutation.mutateAsync({ shot_id: targetShot, generation_id: generationId, imageUrl, thumbUrl });
+      await addImageToShotMutation.mutateAsync({ 
+        shot_id: targetShot, 
+        generation_id: generationId, 
+        imageUrl, 
+        thumbUrl, 
+        project_id: selectedProjectId // Added project_id
+      });
       setLastAffectedShotId(targetShot);
       return true;
     } catch (error: any) { 
@@ -1290,13 +690,17 @@ const EditTravelToolPage = () => {
     ? (prompts.length -1) / videoDuration 
     : 0;
   
-  const showReconstructionSpinner = isClientSideReconstructing || (isOverallGenerating && reconstructVideo && inputFile?.type.startsWith("video/"));
+  const showReconstructionSpinner = isClientSideReconstructing || (isOverallGenerating && reconstructVideo && inputFile && typeof inputFile.type === 'string' && inputFile.type.startsWith("video/"));
 
   if (typeof window !== 'undefined') {
     console.log('[EditTravelToolPage_ImageGalleryInput]', JSON.parse(JSON.stringify(generatedImages)));
   }
 
   const MemoizedShotsPane = React.memo(ShotsPane);
+
+  const canGenerate = !!selectedProjectId && !!inputFile && prompts.filter(p => p.fullPrompt.trim() !== "").length > 0 && !isCreatingTask && 
+                      ( (generationMode === 'kontext' && !!falApiKey) || 
+                        (generationMode === 'flux' && !!localStorage.getItem('fal_api_key')) ); // Flux check might still need API key for worker to use
 
   return (
     <div className="container mx-auto p-4 relative">
@@ -1458,12 +862,11 @@ const EditTravelToolPage = () => {
       <div className="mb-8 text-center">
         <Button 
           onClick={handleGenerate} 
-          disabled={isOverallGenerating || isClientSideReconstructing || !inputFile || prompts.length === 0 || !hasValidFalApiKey} 
+          disabled={!canGenerate} 
           size="lg"
         >
-          {isFluxGenerating ? "Generating (Flux)..." : 
-           isKontextGenerating && !isClientSideReconstructing ? "Generating (Kontext)..." : 
-           isClientSideReconstructing ? "Reconstructing Video (Client)..." :
+          {isCreatingTask ? "Creating Task..." : 
+           isOverallGenerating ? "Generating..." : 
            `Generate Edits (${generationMode === 'flux' ? 'Flux' : 'Kontext'})`}
         </Button>
       </div>
@@ -1472,30 +875,13 @@ const EditTravelToolPage = () => {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" 
              onClick={(e) => { 
                if (e.target === e.currentTarget && !isClientSideReconstructing) {
-                 if (generationMode === 'flux' && isFluxGenerating) {
-                   cancelFluxGeneration();
-                 } else if (generationMode === 'kontext' && isKontextGenerating) {
-                   kontextCancelGenerationRef.current = true;
-                   if (kontextCurrentSubscriptionRef.current && typeof kontextCurrentSubscriptionRef.current.unsubscribe === 'function') {
-                     kontextCurrentSubscriptionRef.current.unsubscribe();
-                   }
-                   kontextCurrentSubscriptionRef.current = null;
-                   setIsKontextGenerating(false);
-                   toast.info("Kontext image editing cancelled from modal.");
-                 } else if (!isKontextGenerating && !isFluxGenerating && isClientSideReconstructing) {
-                   // If only reconstruction is happening and it's cancelled from modal
-                   reconstructionCancelRef.current = true;
-                   setIsClientSideReconstructing(false);
-                   toast.info("Client-side reconstruction cancelled from modal.");
-                 } else {
-                   handleCancelGeneration(); 
-                 }
+                 handleCancelGeneration(); 
                }
              }}>
             <div className="bg-background p-8 rounded-lg shadow-2xl w-full max-w-md text-center" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-2xl font-semibold mb-4">
                 {isClientSideReconstructing ? "Reconstructing Video (Client)..." : 
-                 isFluxGenerating ? "Generating Edits (Flux Mode)..." : "Editing Media (Kontext Mode)..."}
+                 isOverallGenerating ? "Generating..." : "Editing Media (Kontext Mode)..."}
               </h2>
               <p className="mb-4">
                 {isClientSideReconstructing 
@@ -1509,30 +895,7 @@ const EditTravelToolPage = () => {
                 ></div>
               </div>
               <Button variant="destructive" 
-                onClick={() => {
-                  if (generationMode === 'flux' && isFluxGenerating) {
-                    cancelFluxGeneration();
-                  } else if (generationMode === 'kontext' && isKontextGenerating) {
-                    kontextCancelGenerationRef.current = true;
-                    if (kontextCurrentSubscriptionRef.current && typeof kontextCurrentSubscriptionRef.current.unsubscribe === 'function') {
-                      kontextCurrentSubscriptionRef.current.unsubscribe();
-                    }
-                    kontextCurrentSubscriptionRef.current = null;
-                    setIsKontextGenerating(false);
-                    toast.info("Kontext image editing cancelled via button.");
-                  } else if (!isKontextGenerating && !isFluxGenerating && isClientSideReconstructing){
-                     // If only reconstruction is happening and it's cancelled via button
-                    reconstructionCancelRef.current = true;
-                    setIsClientSideReconstructing(false);
-                    toast.info("Client-side reconstruction cancelled via button.");
-                  } else {
-                    handleCancelGeneration(); 
-                  }
-                  if(isClientSideReconstructing) {
-                    setIsClientSideReconstructing(false); 
-                    toast.info("Client-side reconstruction cancelled via button.");
-                  }
-                }}
+                onClick={handleCancelGeneration}
               >Cancel Generation</Button>
             </div>
           </div>

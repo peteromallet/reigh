@@ -5,6 +5,7 @@ export interface GenerationRow {
   // Add other relevant properties from your generations table
   imageUrl?: string;
   thumbUrl?: string;
+  metadata?: any; // Added metadata field, consider a more specific type if known
 }
 
 export interface Shot {
@@ -12,6 +13,7 @@ export interface Shot {
   name: string;
   images: GenerationRow[]; // This will be populated by joining data
   created_at?: string; // Optional, matches the DB schema
+  project_id?: string; // Add project_id here
 }
 
 export interface ShotImage {
