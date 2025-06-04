@@ -137,8 +137,7 @@ const createGenerationForUploadedImage = async (
   }
   
   const promptForGeneration = `External image: ${fileName || 'untitled'}`;
-
-  console.log('[useShots] createGenerationForUploadedImage (API): Creating generation for', { imageUrl, fileName, projectId, prompt: promptForGeneration });
+  
   
   const response = await fetch('/api/generations', {
     method: 'POST',

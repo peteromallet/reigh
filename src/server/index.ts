@@ -90,6 +90,20 @@ app.get('/', (req: express.Request, res: express.Response): void => {
   return;
 });
 
+// Global error handling middleware - MUST be defined after all other app.use() and routes
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('[Global Error Handler]', err);
+  
+  // If the error is an object and has a status, use it, otherwise default to 500
+  const statusCode = typeof err.status === 'number' ? err.status : 500;
+  
+  // Send a generic message or the error message if available
+  const message = err.message || 'An unexpected error occurred on the server.';
+  
+  res.status(statusCode).json({ message });
+});
+
 app.listen(PORT, () => {
   console.log(`API Server listening on port ${PORT}`);
 });

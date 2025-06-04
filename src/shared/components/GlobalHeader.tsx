@@ -5,8 +5,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useProject } from '@/shared/contexts/ProjectContext';
 import { CreateProjectModal } from '@/shared/components/CreateProjectModal';
 import { PlusCircle } from 'lucide-react';
+import { cn } from '@/shared/lib/utils';
 
-export const GlobalHeader: React.FC = () => {
+interface GlobalHeaderProps {
+  contentOffsetRight?: number;
+}
+
+export const GlobalHeader: React.FC<GlobalHeaderProps> = ({ contentOffsetRight = 0 }) => {
   const { projects, selectedProjectId, setSelectedProjectId, isLoadingProjects } = useProject();
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
 
@@ -17,11 +22,16 @@ export const GlobalHeader: React.FC = () => {
   return (
     <>
       <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-14 max-w-screen-2xl items-center">
+        <div 
+          className="container flex h-14 max-w-screen-2xl items-center transition-all duration-300 ease-in-out"
+          style={{
+            paddingRight: `${contentOffsetRight}px`,
+          }}
+        >
           <div className="mr-4 flex items-center">
-            <a href="/" className="mr-6 flex items-center space-x-2">
+            <Link to="/" className="mr-6 flex items-center space-x-2">
               <span className="font-bold sm:inline-block">Reigh</span>
-            </a>
+            </Link>
             {isLoadingProjects && projects.length === 0 ? (
               <div className="w-[180px] text-sm text-muted-foreground">Loading projects...</div>
             ) : projects.length === 0 && !isLoadingProjects ? (

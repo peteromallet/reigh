@@ -103,8 +103,7 @@ const ShotsPage: React.FC = () => {
       orderedGenerationIds,
       projectId: selectedProjectId,
     }, {
-      onSuccess: () => {
-        toast.success('Image order updated.');
+      onSuccess: () => {        
         // setSelectedShot(prev => prev ? { ...prev, images: newOrder } : null); // also update selectedShot
         refreshSelectedShotImages(); // Refresh from source after optimistic update
       },

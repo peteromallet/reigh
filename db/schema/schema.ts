@@ -1,11 +1,9 @@
 // Temporarily empty schema for Drizzle Kit to initialize the migrations folder.
 
-import { pgTable, uuid, text, jsonb, timestamp, integer, pgEnum } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, jsonb, timestamp, integer } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
-
-// Enum for task status
-export const taskStatusEnum = pgEnum('task_status', ['Pending', 'In Progress', 'Completed']);
+import { taskStatusEnum } from './enums';
 
 // --- Canonical Schema ---
 
