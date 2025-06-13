@@ -37,6 +37,30 @@ export const useListTasks = (params: ListTasksParams) => {
   });
 };
 
+// Interface for the task creation payload
+interface CreateTaskPayload {
+  project_id: string;
+  task_type: string;
+  params: Record<string, any>;
+  status?: TaskStatus;
+}
+
+// Hook to create a new task via API
+export const useCreateTask = () => {
+  const queryClient = useQueryClient();
+  return useMutation<Task, Error, CreateTaskPayload>({
+    mutationFn: async (taskPayload) => {
+      const { data } = await axios.post('/api/tasks', taskPayload);
+      return data;
+    },
+    onSuccess: (data) => {
+      // When a new task is created, invalidate the tasks query to refetch the list
+      queryClient.invalidateQueries({ queryKey: [TASKS_QUERY_KEY, data.projectId] });
+    },
+    // Optional: onError handling
+  });
+};
+
 // Types for API responses and request bodies for cancel operations
 interface CancelTaskResponse extends Task { }
 

@@ -27,10 +27,12 @@ import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Label } from './ui/label';
 import { Slider } from './ui/slider';
+import { Button } from './ui/button';
 
 export interface ShotImageManagerProps {
   images: GenerationRow[];
   onImageDelete: (shotImageEntryId: string) => void;
+  onImagesDelete?: (shotImageEntryIds: string[]) => void;
   onImageReorder: (orderedShotGenerationIds: string[]) => void;
   columns?: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
   generationMode: 'batch' | 'by-pair';
@@ -41,6 +43,7 @@ export interface ShotImageManagerProps {
 const ShotImageManager: React.FC<ShotImageManagerProps> = ({
   images,
   onImageDelete,
+  onImagesDelete,
   onImageReorder,
   columns = 4,
   generationMode,
@@ -69,6 +72,13 @@ const ShotImageManager: React.FC<ShotImageManagerProps> = ({
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
+
+  const handleDeleteSelected = () => {
+    if (onImagesDelete) {
+      onImagesDelete(selectedIds);
+    }
+    setSelectedIds([]);
+  };
 
   const handleDragStart = (event: DragStartEvent) => {
     const { active } = event;
@@ -284,6 +294,17 @@ const ShotImageManager: React.FC<ShotImageManagerProps> = ({
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
+      {selectedIds.length > 1 && (
+        <div className="mb-4">
+          <Button
+            variant="destructive"
+            onClick={handleDeleteSelected}
+            className="w-full sm:w-auto"
+          >
+            Delete {selectedIds.length} selected images
+          </Button>
+        </div>
+      )}
       <SortableContext items={images.map((img) => img.shotImageEntryId)} strategy={rectSortingStrategy}>
         <div className={cn("grid gap-3", gridColsClass[columns])}>
           {images.map((image, index) => (

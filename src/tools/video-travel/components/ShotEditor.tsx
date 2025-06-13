@@ -474,6 +474,39 @@ const ShotEditor: React.FC<ShotEditorProps> = ({
     });
   };
 
+  const handleDeleteMultipleImages = (shotImageEntryIds: string[]) => {
+    if (!selectedShot || !selectedProjectId) {
+      toast.error("Cannot delete images: No shot or project selected.");
+      return;
+    }
+
+    // Optimistically remove all selected images
+    const originalImages = localOrderedShotImages;
+    setLocalOrderedShotImages(prev => prev.filter(img => !shotImageEntryIds.includes(img.shotImageEntryId)));
+
+    toast.info(`Deleting ${shotImageEntryIds.length} images...`);
+
+    const deletePromises = shotImageEntryIds.map(shotImageEntryId => 
+      removeImageFromShotMutation.mutateAsync({
+        shot_id: selectedShot.id,
+        shotImageEntryId: shotImageEntryId,
+        project_id: selectedProjectId,
+      })
+    );
+
+    Promise.all(deletePromises)
+      .then(() => {
+        toast.success(`${shotImageEntryIds.length} images deleted successfully.`);
+        onShotImagesUpdate(); // Refresh from server to be sure
+      })
+      .catch((error) => {
+        console.error("Error deleting one or more images:", error);
+        toast.error('Failed to delete one or more images. Reverting changes.');
+        // Rollback on error
+        setLocalOrderedShotImages(originalImages);
+      });
+  };
+
   const handleReorderImagesInShot = (orderedShotGenerationIds: string[]) => {
     if (!selectedShot || !selectedProjectId) {
       console.error('Cannot reorder images: No shot or project selected.');
@@ -887,9 +920,7 @@ const ShotEditor: React.FC<ShotEditorProps> = ({
           <Card className="flex-grow flex flex-col min-h-0">
             <CardHeader>
               <CardTitle>Manage Shot Images</CardTitle>
-              <div className="flex justify-between items-center mb-2">
-                <h3 className="text-lg font-semibold tracking-tight">Images</h3>
-              </div>
+
               <p className="text-sm text-muted-foreground pt-1">
                 Drag to reorder. Cmd+click to select and move multiple images.
               </p>
@@ -899,6 +930,7 @@ const ShotEditor: React.FC<ShotEditorProps> = ({
                 <ShotImageManager
                   images={nonVideoImages}
                   onImageDelete={handleDeleteImageFromShot}
+                  onImagesDelete={handleDeleteMultipleImages}
                   onImageReorder={handleReorderImagesInShot}
                   columns={3}
                   generationMode={generationMode}

@@ -5,15 +5,13 @@ import { GenerationRow } from '@/types/shots';
 import { Button } from '@/shared/components/ui/button';
 import { Trash2 } from 'lucide-react';
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/shared/components/ui/alert-dialog';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/shared/components/ui/dialog';
 import { Checkbox } from '@/shared/components/ui/checkbox';
 import { Label } from '@/shared/components/ui/label';
 import { cn } from '@/shared/lib/utils';
@@ -111,14 +109,14 @@ export const SortableImageItem: React.FC<SortableImageItemProps> = ({
       >
         <Trash2 className="h-4 w-4" />
       </Button>
-      <AlertDialog open={isConfirmDeleteDialogOpen} onOpenChange={setIsConfirmDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Image</AlertDialogTitle>
-            <AlertDialogDescription>
+      <Dialog open={isConfirmDeleteDialogOpen} onOpenChange={setIsConfirmDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Image</DialogTitle>
+            <DialogDescription>
               Do you want to permanently remove this image from the shot? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
+            </DialogDescription>
+          </DialogHeader>
           <div className="flex items-center space-x-2 my-4">
             <Checkbox
               id="skip-confirm"
@@ -129,16 +127,28 @@ export const SortableImageItem: React.FC<SortableImageItemProps> = ({
                 currentDialogSkipChoiceRef.current = booleanValue;
               }}
             />
-            <Label htmlFor="skip-confirm" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+            <Label 
+              htmlFor="skip-confirm" 
+              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+              onClick={() => {
+                const newValue = !skipConfirmationNextTimeVisual;
+                setSkipConfirmationNextTimeVisual(newValue);
+                currentDialogSkipChoiceRef.current = newValue;
+              }}
+            >
               Delete without confirmation in the future
             </Label>
           </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDelete}>Confirm Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsConfirmDeleteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmDelete}>
+              Confirm Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }; 

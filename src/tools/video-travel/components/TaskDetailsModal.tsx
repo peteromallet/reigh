@@ -52,7 +52,7 @@ const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({ generationId, child
   const [isOpen, setIsOpen] = useState(false);
   const [task, setTask] = useState<Task | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [replaceImages, setReplaceImages] = useState(false);
+  const [replaceImages, setReplaceImages] = useState(true);
 
   useEffect(() => {
     const fetchTaskDetails = async () => {
@@ -357,7 +357,7 @@ const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({ generationId, child
                     onCheckedChange={(checked) => setReplaceImages(checked as boolean)}
                   />
                   <Label htmlFor="replaceImages" className="text-sm font-medium">
-                    Replace these images
+                    Also use these images
                   </Label>
                 </div>
               )}

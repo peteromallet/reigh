@@ -33,26 +33,28 @@
 | `/supabase` | Supabase CLI/config |
 | `/dist` | Build output (auto-generated) |
 | Config files | vite.config.ts, tailwind.config.ts, tsconfig*.json, ESLint, etc. |
-| `drizzle.config.ts` | Drizzle Kit config (PostgreSQL/Supabase). For PG migrations |
-| `drizzle-sqlite.config.ts` | Drizzle Kit config (SQLite). For local SQLite migrations |
-| `/db/schema/schema.ts` | Canonical DB schema (Drizzle ORM, PG-first). Users table includes api_keys JSON column for storing FAL/OpenAI/Replicate keys |
-| `/db/migrations/` | PostgreSQL migration files |
-| `/db/migrations-sqlite/` | SQLite migration files |
-| `/db/seed.ts` | Seeds local SQLite DB for development |
-| `/src/lib/db/index.ts` | Runtime DAL: Exports Drizzle client (server-side, SQLite/PG) & Supabase JS client (client-side) |
+| `drizzle.config.ts` | Drizzle Kit config for **PostgreSQL**. Used for generating production migrations. |
+| `drizzle-sqlite.config.ts` | Drizzle Kit config for **SQLite**. Used for generating local development migrations. |
+| `/db/schema/schema.ts` | Canonical DB schema (Drizzle ORM, **PostgreSQL-first**). Uses `pg-core` types (`pgTable`, `uuid`, `timestamp`, `jsonb`). |
+| `/db/migrations/` | PostgreSQL migration files generated from the canonical schema. |
+| `/db/migrations-sqlite/` | SQLite migration files (can be generated for local dev, not committed). |
+| `/db/seed.ts` | Seeds the database for development (works with both PG and SQLite). |
+| `/src/lib/db/index.ts` | Runtime Data Access Layer. Exports a Drizzle client that **connects to PostgreSQL in production** (`NODE_ENV=production`) and **SQLite locally**. Also re-exports the Supabase JS client for frontend use (e.g., storage). |
+| `DEPLOYMENT.md` | Contains detailed instructions for setting up development and production environments, including database migrations and environment variables. |
 
-### DB Workflow (Drizzle ORM - SQLite & PostgreSQL)
-1. **Schema**: `/db/schema/schema.ts` (Drizzle, PG-first)
-2. **Migrations**: 
-   - PostgreSQL: `npm run db:generate:pg`
-   - SQLite: `npm run db:generate:sqlite`
-3. **Apply Migrations**: 
-   - PG: to Supabase (CLI/CI)
-   - SQLite: auto on `npm run start:api`
-4. **DAL Usage**: 
-   - API server uses db from `/src/lib/db/index.ts` (Drizzle client)
-   - Client-side uses db (Supabase JS client) or API calls
-5. **Seeding**: `npm run db:seed:sqlite` (local SQLite)
+### DB Workflow (Drizzle ORM - Dual Environment)
+1.  **Schema**: `/db/schema/schema.ts` is the single source of truth, written using Drizzle's PostgreSQL (`pg-core`) types.
+2.  **Migrations**:
+    *   **PostgreSQL (Production)**: `npm run db:generate:pg`
+    *   **SQLite (Local)**: `npm run db:generate:sqlite`
+3.  **Apply Migrations**:
+    *   **PG**: Apply to Supabase using `npm run db:push:pg`. See `DEPLOYMENT.md`.
+    *   **SQLite**: The schema is pushed automatically on server start via `npm run start:api`.
+4.  **Data Access**:
+    *   **Backend (Express API)**: Uses the Drizzle client from `/src/lib/db/index.ts`. This client is environment-aware and connects to the appropriate database (PG in prod, SQLite locally). All database operations (CRUD) should go through this API.
+    *   **Frontend (React)**:
+        *   For **database operations**, it makes API calls to the Express server (e.g., `fetch('/api/tasks')`). It **does not** use the Supabase JS client for database queries.
+        *   For **file storage** or **edge functions**, it can use the Supabase JS client directly.
 
 ### 3. Source Code Breakdown
 
@@ -77,7 +79,7 @@
 #### 3.3. Tool Modules (`src/tools/`)
 
 ##### Image Generation (`src/tools/image-generation/`)
-- **pages/ImageGenerationToolPage.tsx**: Main UI. Fetches generations. Hosts ImageGenerationForm, progress, ImageGallery. Orchestrates FAL-AI, tracks progress, persists images. Handles upscale, delete, optimistic updates.
+- **pages/ImageGenerationToolPage.tsx**: Main UI. Fetches generations via API. Hosts `ImageGenerationForm`. Creates new image generation jobs by POSTing to `/api/tasks`. Handles upscale (via Supabase function), delete, and optimistic updates.
 - **components/ImageGenerationForm.tsx**: Multi-step form (prompts, LoRAs, controls, start image). localStorage state.
 - **components/BulkEditControls.tsx**, **components/PromptGenerationControls.tsx**: Helper toolbars.
 - **hooks/useGenerations.ts**: useListGenerations (GET /api/generations), placeholders for delete/upscale.
@@ -96,7 +98,7 @@
 - **components/CreateShotModal.tsx**: Dialog to create new shots.
 
 ##### Edit Travel (`src/tools/edit-travel/`)
-- **pages/EditTravelToolPage.tsx**: Main UI for image editing with text. Upload input image. Uses PromptEditorModal. Inputs: images/prompt, aspect ratio. Triggers Fal API (fal-ai/flux-pro/kontext). Displays results in ImageGallery. Saves edits to generations table.
+- **pages/EditTravelToolPage.tsx**: Main UI for image editing with text. Upload input image. Creates new image editing jobs by POSTing to `/api/tasks`. Displays results in ImageGallery.
 - **components/EditTravelForm.tsx**: Form for managing prompts, input file, generation mode, and other settings for the Edit Travel tool.
 
 #### 3.4. Shared Elements (`src/shared/`)
@@ -111,7 +113,7 @@
 - **TasksPane/**:
   - `TasksPane.tsx`: Right slide-out panel for tasks
   - `TaskList.tsx`: Lists tasks, filters, real-time updates via WebSocket
-  - `TaskItem.tsx`: Displays task details, cancel button
+  - `TaskItem.tsx**: Displays task details, cancel button
 - **ui/**: 50+ re-exports/variants of shadcn components
 - **loading.tsx**: Wes Anderson-inspired loading indicators
 - **DraggableImage.tsx**: Makes gallery images draggable
@@ -147,7 +149,7 @@
   - `useHandleExternalImageDrop`: Handles external image drop: upload, POST /api/generations, link to shot (creates shot if new)
 - **useTasks.ts**: Task management:
   - `useListTasks`: GET /api/tasks?projectId=&status=
-  - `useCreateTask`: POST /api/tasks
+  - `useCreateTask`: POST /api/tasks (used to create any new background job).
   - `useCancelTask`: PATCH /api/tasks/:taskId/cancel
   - `useUpdateTaskStatus`: PATCH /api/tasks/:taskId/status. For 'travel_stitch' completion, backend taskProcessingService.ts creates generation/shot_generation
 - **useCancelAllPendingTasks**: POST /api/tasks/cancel-pending

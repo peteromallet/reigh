@@ -1,8 +1,8 @@
 import { db } from './db';
 import { users as usersSchema, projects as projectsSchema } from '../../db/schema/schema';
 import { eq, and } from 'drizzle-orm';
-import { randomUUID } from 'node:crypto';
 
+// Use a proper UUID format for the dummy user
 const DUMMY_USER_ID = '3e3e3e3e-3e3e-3e3e-3e3e-3e3e3e3e3e3e';
 const DEFAULT_PROJECT_NAME = 'Default Project';
 
@@ -31,8 +31,8 @@ export const seedDatabase = async () => {
 
     if (existingProject.length === 0) {
       // 3. If no default project, create one for the dummy user
+      // Let PostgreSQL generate the UUID automatically
       await db.insert(projectsSchema).values({
-        id: randomUUID(),
         name: DEFAULT_PROJECT_NAME,
         userId: DUMMY_USER_ID,
         aspectRatio: '16:9',

@@ -11,6 +11,7 @@ import { useProject } from "@/shared/contexts/ProjectContext";
 import { uploadImageToStorage } from '@/shared/lib/imageUploader';
 import { nanoid } from 'nanoid';
 import { useListAllGenerations, useDeleteGeneration } from "@/shared/hooks/useGenerations";
+import { useCreateTask } from "@/shared/hooks/useTasks";
 import { Settings } from "lucide-react";
 import { useApiKeys } from '@/shared/hooks/useApiKeys';
 
@@ -68,6 +69,7 @@ const ImageGenerationToolPage = () => {
   const { lastAffectedShotId, setLastAffectedShotId } = useLastAffectedShot();
   const { data: generatedImagesData, isLoading: isLoadingGenerations } = useListAllGenerations(selectedProjectId);
   const deleteGenerationMutation = useDeleteGeneration();
+  const createTaskMutation = useCreateTask();
 
   useEffect(() => {
     if (generatedImagesData) {
@@ -170,7 +172,7 @@ const ImageGenerationToolPage = () => {
     }
 
     setIsCreatingTask(true);
-    toast.info("Preparing image generation task to be sent to API...");
+    toast.info("Preparing image generation task...");
 
     if (showPlaceholders && formData.prompts.length * formData.imagesPerPrompt > 0) {
       setGeneratedImages([]); // Clear placeholders
@@ -212,25 +214,20 @@ const ImageGenerationToolPage = () => {
             strength: lora.scale // Assuming the form still provides 'scale'
         })),
       },
-      status: 'Pending',
+      status: 'Pending' as const,
     };
 
-    try {
-      const { data: newTask, error } = await supabase.from('tasks').insert(taskPayload).select().single();
-
-      if (error) throw error;
-
-      if (newTask) {
+    createTaskMutation.mutate(taskPayload, {
+      onSuccess: (newTask) => {
         toast.success(`Image generation task created (ID: ${newTask.id.substring(0,8)}...). Check the Tasks pane for progress.`);
-        // No longer need to call onGenerationStart or onGenerationComplete
-        // The backend and WebSocket will handle state updates.
+        setIsCreatingTask(false);
+      },
+      onError: (err: any) => {
+        console.error('Error creating image generation task:', err);
+        toast.error(`Failed to create task: ${err.message || 'Unknown API error'}`);
+        setIsCreatingTask(false);
       }
-    } catch (err: any) {
-      console.error('Error creating image generation task:', err);
-      toast.error(`Failed to create task: ${err.message || 'Unknown API error'}`);
-    } finally {
-      setIsCreatingTask(false);
-    }
+    });
   };
 
   // const handleCancelGeneration = () => { // Now using cancelGeneration from the hook

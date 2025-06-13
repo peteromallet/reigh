@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, useContext } from "react";
 import { Button } from "@/shared/components/ui/button";
-import ImageGallery, { GeneratedImageWithMetadata, DisplayableMetadata } from "@/shared/components/ImageGallery";
+import ImageGallery, { GeneratedImageWithMetadata } from "@/shared/components/ImageGallery";
 import SettingsModal from "@/shared/components/SettingsModal";
 import { PromptEntry } from "@/tools/image-generation/components/ImageGenerationForm";
 import PromptEditorModal from "@/shared/components/PromptEditorModal";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { useListShots, useAddImageToShot } from "@/shared/hooks/useShots";
 import { useListAllGenerations, useDeleteGeneration } from "@/shared/hooks/useGenerations";
 import { LastAffectedShotContext } from "@/shared/contexts/LastAffectedShotContext";
@@ -20,19 +19,7 @@ import ShotsPane from '@/shared/components/ShotsPane/ShotsPane';
 import EditTravelForm from "../components/EditTravelForm";
 import usePersistentState from "@/shared/hooks/usePersistentState";
 import { useApiKeys } from '@/shared/hooks/useApiKeys';
-
-// Local definition for Json type
-export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
-
-const EDIT_TRAVEL_INPUT_FILE_KEY = 'editTravelInputFile';
-const EDIT_TRAVEL_PROMPTS_KEY = 'editTravelPrompts';
-const EDIT_TRAVEL_IMAGES_PER_PROMPT_KEY = 'editTravelImagesPerPrompt';
-const EDIT_TRAVEL_GENERATION_MODE_KEY = 'editTravelGenerationMode';
-const MAX_LOCAL_STORAGE_ITEM_LENGTH = 4 * 1024 * 1024;
-
-const EDIT_TRAVEL_FLUX_SOFT_EDGE_STRENGTH_KEY = 'editTravelFluxSoftEdgeStrength';
-const EDIT_TRAVEL_FLUX_DEPTH_STRENGTH_KEY = 'editTravelFluxDepthStrength';
-const EDIT_TRAVEL_RECONSTRUCT_VIDEO_KEY = 'editTravelReconstructVideo';
+import { useCreateTask } from "@/shared/hooks/useTasks";
 
 const EditTravelToolPage = () => {
   const [prompts, setPrompts] = usePersistentState<PromptEntry[]>('editTravelPrompts', []);
@@ -53,6 +40,7 @@ const EditTravelToolPage = () => {
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   
   const { getApiKey } = useApiKeys();
+  const createTaskMutation = useCreateTask();
   
   const kontextCancelGenerationRef = useRef(false);
   const kontextCurrentSubscriptionRef = useRef<any>(null);
@@ -198,27 +186,26 @@ const EditTravelToolPage = () => {
       ? { ...commonTaskParams, loras: lorasForFlux, depthStrength: fluxDepthStrength, softEdgeStrength: fluxSoftEdgeStrength }
       : commonTaskParams;
     
-    try {
-      const { data: newTask, error } = await supabase.from('tasks').insert({
+    const taskPayload = {
         project_id: selectedProjectId,
         task_type: taskType, 
         params: specificParams,
-        status: 'Pending',
-      }).select().single();
+        status: 'Pending' as const,
+    };
 
-      if (error) throw error;
-
-      if (newTask) {        
-        toast.success(`${generationMode.charAt(0).toUpperCase() + generationMode.slice(1)} task created (ID: ${newTask.id.substring(0,8)}...).`);
-        if (showPlaceholders) setShowPlaceholders(false);
-        queryClient.invalidateQueries({ queryKey: ['shots', selectedProjectId] });
-      }
-    } catch (err: any) {
-      console.error(`Error creating ${generationMode} task:`, err);
-      toast.error(`Failed to create task: ${err.message || 'Unknown API error'}`);
-    } finally {
-      setIsCreatingTask(false);
-    }
+    createTaskMutation.mutate(taskPayload, {
+        onSuccess: (newTask) => {
+            toast.success(`${generationMode.charAt(0).toUpperCase() + generationMode.slice(1)} task created (ID: ${newTask.id.substring(0,8)}...).`);
+            if (showPlaceholders) setShowPlaceholders(false);
+            queryClient.invalidateQueries({ queryKey: ['shots', selectedProjectId] });
+            setIsCreatingTask(false);
+        },
+        onError: (err: any) => {
+            console.error(`Error creating ${generationMode} task:`, err);
+            toast.error(`Failed to create task: ${err.message || 'Unknown API error'}`);
+            setIsCreatingTask(false);
+        }
+    });
   };
   
   const handleCancelGeneration = () => {
@@ -262,7 +249,7 @@ const EditTravelToolPage = () => {
   const MemoizedShotsPane = React.memo(ShotsPane);
   const canGenerate = !!selectedProjectId && !!inputFile && prompts.filter(p => p.fullPrompt.trim() !== "").length > 0 && !isCreatingTask;
   const imagesToShow = showPlaceholders && (!generatedImages || generatedImages.length === 0) 
-    ? Array(4).fill(null).map((_,idx) => ({id: `ph-${idx}`, url: "/placeholder.svg", prompt: "Placeholder"})) 
+    ? Array(4).fill(null).map((_,idx) => ({id: `ph-${idx}`, url: "/placeholder.svg", prompt: "Placeholder"} as GeneratedImageWithMetadata)) 
     : [...(generatedImages || [])].reverse();
 
   return (

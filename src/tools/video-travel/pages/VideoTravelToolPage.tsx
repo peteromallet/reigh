@@ -60,6 +60,11 @@ const VideoTravelToolPage: React.FC = () => {
     after_first_post_generation_brightness: -0.3,
   });
 
+  // Clear currentShotId when component mounts to ensure we always start with shot list view
+  useEffect(() => {
+    setCurrentShotId(null);
+  }, []); // Empty dependency array means this runs only once on mount
+
   useEffect(() => {
     fetch('/data/loras.json')
       .then(response => response.json())
