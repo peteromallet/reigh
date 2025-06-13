@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from "react";
 import { Trash2, Info, Settings, CheckCircle, AlertTriangle, Download, PlusCircle, Check, Sparkles, Filter } from "lucide-react";
 import { Button } from "@/shared/components/ui/button";
@@ -97,7 +98,7 @@ const formatMetadataForDisplay = (metadata: DisplayableMetadata): string => {
   if (metadata.scheduler) displayText += `Scheduler: ${metadata.scheduler}\n`;
   if (metadata.tool_type) displayText += `Tool: ${metadata.tool_type}\n`; // Display tool_type
   
-  if (metadata.activeLoras && metadata.activeLoras.length > 0) {
+  if (metadata.activeLoras && Array.isArray(metadata.activeLoras) && metadata.activeLoras.length > 0) {
     displayText += "Active LoRAs:\n";
     metadata.activeLoras.forEach(lora => {
       // Now using lora.name and lora.strength directly
@@ -117,6 +118,8 @@ const formatMetadataForDisplay = (metadata: DisplayableMetadata): string => {
 };
 
 const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeleting, onApplySettings, allShots, lastShotId, onAddToLastShot, currentToolType, initialFilterState = true }) => {
+  console.log('[ImageGallery] Rendering with images:', images?.length || 0, 'allShots:', allShots?.length || 0);
+  
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const [lightboxImageAlt, setLightboxImageAlt] = useState<string>("Fullscreen view");
   const [lightboxImageId, setLightboxImageId] = useState<string | undefined>(undefined);
@@ -124,7 +127,10 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeletin
   const { toast } = useToast();
   const { setLastAffectedShotId } = useLastAffectedShot();
   const { currentShotId } = useCurrentShot();
-  const simplifiedShotOptions = React.useMemo(() => allShots.map(s => ({ id: s.id, name: s.name })), [allShots]);
+  
+  // Ensure allShots is always an array to prevent iteration errors
+  const safeAllShots = Array.isArray(allShots) ? allShots : [];
+  const simplifiedShotOptions = React.useMemo(() => safeAllShots.map(s => ({ id: s.id, name: s.name })), [safeAllShots]);
 
   const [selectedShotIdLocal, setSelectedShotIdLocal] = useState<string>(() => 
     currentShotId || lastShotId || (simplifiedShotOptions.length > 0 ? simplifiedShotOptions[0].id : "")
@@ -243,8 +249,12 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeletin
 
   const filteredImages = React.useMemo(() => {
     const galleryLogId = nanoid(5);
+    
+    // Ensure images is always an array to prevent iteration errors
+    const safeImages = Array.isArray(images) ? images : [];
+    console.log('[ImageGallery] filteredImages useMemo - safeImages length:', safeImages.length);
 
-    let currentFiltered = images;
+    let currentFiltered = safeImages;
 
     // 1. Apply tool_type filter
     if (filterByToolType && currentToolType) {
@@ -291,9 +301,16 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, isDeletin
         return true; // Should not be reached if filter is 'image' or 'video'
       });
     }
-        
+    
+    console.log('[ImageGallery] filteredImages result length:', currentFiltered.length);
     return currentFiltered;
   }, [images, filterByToolType, currentToolType, mediaTypeFilter]);
+
+  // Ensure we don't render if images is not an array
+  if (!Array.isArray(images)) {
+    console.warn('[ImageGallery] images prop is not an array:', images);
+    return <div className="text-center py-8 text-muted-foreground">Invalid image data</div>;
+  }
 
   return (
     <TooltipProvider delayDuration={300}>

@@ -1,3 +1,4 @@
+
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { Task, TaskStatus } from '@/types/tasks'; // Assuming Task and TaskStatus types will be defined here or imported appropriately
@@ -20,18 +21,28 @@ export const useListTasks = (params: ListTasksParams) => {
   return useQuery<Task[], Error>({
     queryKey: [TASKS_QUERY_KEY, projectId, status],
     queryFn: async () => {
+      console.log('[useListTasks] Fetching tasks for projectId:', projectId, 'status:', status);
       if (!projectId) {
         // Return an empty array or throw an error if projectId is not available
         // This prevents calling the API with undefined projectId
+        console.log('[useListTasks] No projectId, returning empty array');
         return []; 
       }
-      const response = await axios.get('/api/tasks', {
-        params: {
-          projectId,
-          status, // Server will handle if status is single or array
-        },
-      });
-      return response.data;
+      try {
+        const response = await axios.get('/api/tasks', {
+          params: {
+            projectId,
+            status, // Server will handle if status is single or array
+          },
+        });
+        const tasks = response.data;
+        console.log('[useListTasks] Received tasks:', tasks);
+        // Ensure we always return an array
+        return Array.isArray(tasks) ? tasks : [];
+      } catch (error) {
+        console.error('[useListTasks] Error fetching tasks:', error);
+        return []; // Return empty array on error to prevent iteration issues
+      }
     },
     enabled: !!projectId, // Only run the query if projectId is available
   });
@@ -50,14 +61,19 @@ export const useCreateTask = () => {
   const queryClient = useQueryClient();
   return useMutation<Task, Error, CreateTaskPayload>({
     mutationFn: async (taskPayload) => {
+      console.log('[useCreateTask] Creating task:', taskPayload);
       const { data } = await axios.post('/api/tasks', taskPayload);
+      console.log('[useCreateTask] Task created:', data);
       return data;
     },
     onSuccess: (data) => {
+      console.log('[useCreateTask] Task creation successful, invalidating queries for projectId:', data.projectId);
       // When a new task is created, invalidate the tasks query to refetch the list
       queryClient.invalidateQueries({ queryKey: [TASKS_QUERY_KEY, data.projectId] });
     },
-    // Optional: onError handling
+    onError: (error) => {
+      console.error('[useCreateTask] Task creation failed:', error);
+    }
   });
 };
 
@@ -76,16 +92,22 @@ export const useCancelTask = () => {
 
   return useMutation<Task, Error, string>({
     mutationFn: async (taskId) => {
+      console.log('[useCancelTask] Cancelling task:', taskId);
       const response = await axios.patch(`/api/tasks/${taskId}/cancel`); // Endpoint might need to change if not generic for status update
+      console.log('[useCancelTask] Task cancelled:', response.data);
       return response.data;
     },
     onSuccess: (data) => {
+      console.log('[useCancelTask] Task cancellation successful, invalidating queries for projectId:', selectedProjectId);
       // Invalidate and refetch tasks list for the current project
       queryClient.invalidateQueries({ queryKey: [TASKS_QUERY_KEY, selectedProjectId] });
       // Also invalidate specific status lists if they are cached separately
       queryClient.invalidateQueries({ queryKey: [TASKS_QUERY_KEY, selectedProjectId, ['Pending']] });
       queryClient.invalidateQueries({ queryKey: [TASKS_QUERY_KEY, selectedProjectId, ['Cancelled']] });
     },
+    onError: (error) => {
+      console.error('[useCancelTask] Task cancellation failed:', error);
+    }
   });
 };
 
@@ -97,20 +119,23 @@ export const useCancelAllPendingTasks = () => {
 
   return useMutation<CancelAllPendingTasksResponse, Error, { projectId: string }>({
     mutationFn: async ({ projectId }) => {
+      console.log('[useCancelAllPendingTasks] Cancelling all pending tasks for projectId:', projectId);
       if (!projectId) {
         throw new Error("Project ID is required to cancel all pending tasks.");
       }
       const response = await axios.post('/api/tasks/cancel-pending', { projectId });
+      console.log('[useCancelAllPendingTasks] All pending tasks cancelled:', response.data);
       return response.data;
     },
     onSuccess: (data) => {
+      console.log('[useCancelAllPendingTasks] All pending tasks cancellation successful, invalidating queries for projectId:', selectedProjectId);
       // Invalidate and refetch tasks list for the current project to reflect the changes
       queryClient.invalidateQueries({ queryKey: [TASKS_QUERY_KEY, selectedProjectId] });
       queryClient.invalidateQueries({ queryKey: [TASKS_QUERY_KEY, selectedProjectId, ['Pending']] });
       queryClient.invalidateQueries({ queryKey: [TASKS_QUERY_KEY, selectedProjectId, ['Cancelled']] });
     },
-    // onError: (error) => { // Handled by caller using toast for now
-    //   console.error("Error cancelling all pending tasks:", error);
-    // }
+    onError: (error) => {
+      console.error('[useCancelAllPendingTasks] All pending tasks cancellation failed:', error);
+    }
   });
 }; 

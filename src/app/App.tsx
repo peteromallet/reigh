@@ -1,3 +1,4 @@
+
 import React, { useContext } from 'react';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/shared/components/ui/tooltip";
@@ -49,10 +50,12 @@ const AppInternalContent = () => {
     const { active, over } = event;
 
     if (!selectedProjectId) {
+      console.warn('handleDragEnd: No selectedProjectId available');
       return;
     }
 
     if (!over) {
+      console.log('handleDragEnd: No drop target');
       return;
     }
 
@@ -73,7 +76,7 @@ const AppInternalContent = () => {
     if (isExternalFile && externalFile) {
       if (droppableZone.type === 'new-group-zone' || droppableZone.type === 'shot-group') {
         const targetShotId = droppableZone.type === 'shot-group' ? droppableZone.shotId : null;
-        const currentShotsCount = shotsFromHook?.length || 0;
+        const currentShotsCount = Array.isArray(shotsFromHook) ? shotsFromHook.length : 0;
         
         const result = await handleExternalImageDropMutation.mutateAsync({
             imageFiles: [externalFile], 
@@ -146,6 +149,8 @@ const AppInternalContent = () => {
 };
 
 function App() {
+  console.log('[App] Initializing application...');
+  
   return (
     <QueryClientProvider client={queryClient}>
       <ProjectProvider>
