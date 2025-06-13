@@ -37,6 +37,17 @@ export const useListTasks = (params: ListTasksParams) => {
         });
         const tasks = response.data;
         console.log('[useListTasks] Received tasks:', tasks);
+        console.log('[useListTasks] Tasks type check - is array?:', Array.isArray(tasks));
+        console.log('[useListTasks] Tasks value:', JSON.stringify(tasks));
+        
+        // DEBUG: Check if tasks is iterable
+        if (tasks !== null && tasks !== undefined) {
+          if (typeof tasks[Symbol.iterator] !== 'function') {
+            console.error('[useListTasks] ERROR: tasks is not iterable!', tasks);
+            return [];
+          }
+        }
+        
         // Ensure we always return an array
         return Array.isArray(tasks) ? tasks : [];
       } catch (error) {

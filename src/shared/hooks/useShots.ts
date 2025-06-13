@@ -92,7 +92,11 @@ export const useListShots = (projectId: string | null) => {
   return useQuery<Shot[], Error>({
     queryKey: ['shots', projectId], 
     queryFn: async () => {
-      if (!projectId) return []; 
+      console.log('[useListShots] Fetching shots for projectId:', projectId);
+      if (!projectId) {
+        console.log('[useListShots] No projectId, returning empty array');
+        return [];
+      }
 
       // API Call to fetch shots
       const response = await fetch(`/api/shots?projectId=${projectId}`);
@@ -103,9 +107,21 @@ export const useListShots = (projectId: string | null) => {
       }
       
       const data: Shot[] = await response.json();
+      console.log('[useListShots] Received shots data:', data);
+      console.log('[useListShots] Shots type check - is array?:', Array.isArray(data));
+      console.log('[useListShots] Shots value:', JSON.stringify(data));
+      
+      // DEBUG: Check if data is iterable
+      if (data !== null && data !== undefined) {
+        if (typeof data[Symbol.iterator] !== 'function') {
+          console.error('[useListShots] ERROR: shots data is not iterable!', data);
+          return [];
+        }
+      }
+      
       // The API now returns data in the client's expected Shot[] structure, including transformed images
       // So, direct transformation here is no longer needed if API does it correctly.
-      return data;
+      return Array.isArray(data) ? data : [];
     },
     enabled: !!projectId, 
     // refetchInterval: 5000, // Temporarily commented out for testing proxy issues
@@ -571,4 +587,4 @@ export const useHandleExternalImageDrop = () => {
   });
 
   return mutation;
-}; 
+};

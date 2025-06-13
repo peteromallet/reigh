@@ -27,6 +27,16 @@ const AppInternalContent = () => {
   const { selectedProjectId } = useProject();
   const { data: shotsFromHook, isLoading: isLoadingShots } = useListShots(selectedProjectId);
 
+  console.log('[App] shotsFromHook:', shotsFromHook);
+  console.log('[App] shotsFromHook type check - is array?:', Array.isArray(shotsFromHook));
+  
+  // DEBUG: Check if shotsFromHook is iterable before using it
+  if (shotsFromHook !== null && shotsFromHook !== undefined) {
+    if (typeof shotsFromHook[Symbol.iterator] !== 'function') {
+      console.error('[App] ERROR: shotsFromHook is not iterable!', shotsFromHook);
+    }
+  }
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
